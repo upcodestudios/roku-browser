@@ -16,8 +16,13 @@
 
         sub execute()
             request = m.top.request
+            requestId = 0
+            if request <> invalid and request.DoesExist("requestId") then requestId = request.requestId
+
             if request = invalid then
                 response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response.requestId = requestId
+                response.providerId = ""
                 response.metadata = { stage: "request_missing" }
                 m.top.response = response
                 return
@@ -27,12 +32,18 @@
             if request.DoesExist("provider") then provider = request.provider
             if provider = invalid then
                 response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response.requestId = requestId
+                response.providerId = ""
                 response.metadata = { stage: "provider_missing" }
                 m.top.response = response
                 return
             end if
 
-            m.top.response = IptvCatalogService_LoadProvider(provider)
+            response = IptvCatalogService_LoadProvider(provider)
+            response.requestId = requestId
+            response.providerId = Iptv_SafeString(provider.id)
+            if not response.DoesExist("metadata") or response.metadata = invalid then response.metadata = {}
+            m.top.response = response
         end sub
     ]]></script>
 </component>

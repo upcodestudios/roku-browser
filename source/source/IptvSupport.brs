@@ -394,6 +394,25 @@ function Iptv_DefaultProviderConfig() as Object
     }
 end function
 
+function Iptv_SampleProviderConfig() as Object
+    return {
+        id: "sample-feed",
+        kind: "default",
+        title: "Sample Feed",
+        endpoint: "pkg:/data/default-feed.m3u",
+        username: "",
+        password: "",
+        guideUrl: "pkg:/data/default-guide.xml",
+        enabled: true,
+        options: {
+            largeFeed: false,
+            initialChannelLimit: 0,
+            deferGuide: false,
+            requestTimeoutMs: 15000
+        }
+    }
+end function
+
 function Iptv_NewProviderConfig(kind as Dynamic, title as Dynamic, endpoint as Dynamic, username = "" as Dynamic, password = "" as Dynamic, guideUrl = "" as Dynamic) as Object
     baseTitle = Iptv_Trim(title)
     if baseTitle = "" then baseTitle = Iptv_HostLabel(endpoint)

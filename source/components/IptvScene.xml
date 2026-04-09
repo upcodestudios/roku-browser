@@ -94,6 +94,7 @@
             m.visibleChannels = []
             m.currentGroupKey = "All"
             m.currentProviderId = ""
+            m.activeRequestId = 0
             m.focusArea = "group"
             m.overlayMode = ""
             m.dialogMode = ""
@@ -165,7 +166,13 @@
                 return
             end if
 
-            if m.isLoading then return
+            nextRequestId = m.activeRequestId + 1
+            if m.isLoading then
+                m.loadTask.control = "STOP"
+                appendDebug("Load overridden by " + provider.title)
+            end if
+
+            m.activeRequestId = nextRequestId
             m.isLoading = true
             m.currentProviderId = provider.id
             m.providerLabel.text = provider.title + "  [" + Iptv_Upper(provider.kind) + "]"
@@ -177,14 +184,24 @@
                 showLoadingPlaceholders("Loading channels and guide data ...")
                 showStatus("info", "Loading provider data from " + Iptv_HostLabel(provider.endpoint) + " ...")
             end if
-            appendDebug("Load started: " + provider.title)
-            m.loadTask.request = { provider: provider }
+            appendDebug("Load started: " + provider.title + " (#" + nextRequestId.ToStr() + ")")
+            m.loadTask.request = {
+                provider: provider,
+                requestId: nextRequestId
+            }
             m.loadTask.control = "RUN"
         end sub
 
         sub onCatalogLoaded()
             response = m.loadTask.response
             if response = invalid then return
+
+            responseRequestId = 0
+            if response.DoesExist("requestId") then responseRequestId = response.requestId
+            if responseRequestId <> m.activeRequestId then
+                appendDebug("Ignored stale load response #" + responseRequestId.ToStr())
+                return
+            end if
 
             m.isLoading = false
             m.catalog = response
@@ -449,6 +466,7 @@
 
         sub showSetupOverlay()
             rows = [
+                { title: "Use Sample Feed", meta: "Install the packaged demo feed with guide data", key: "setup:sample" },
                 { title: "Use Built-In Playlist", meta: "Install the IPTV-org public playlist as a provider", key: "setup:default" },
                 { title: "Add M3U Playlist", meta: "Enter a remote M3U playlist URL", key: "setup:m3u" },
                 { title: "Add Xtream Provider", meta: "Enter Xtream server URL, username, and password", key: "setup:xtream" }
@@ -462,6 +480,7 @@
                 key = "provider:" + provider.id
                 rows.Push({ title: provider.title, meta: provider.kind + "  |  " + Iptv_HostLabel(provider.endpoint), key: key })
             end for
+            rows.Push({ title: "Use Sample Feed", meta: "Add or restore the packaged sample provider", key: "setup:sample" })
             rows.Push({ title: "Use Built-In Playlist", meta: "Add or restore the IPTV-org playlist provider", key: "setup:default" })
             rows.Push({ title: "Add M3U Playlist", meta: "Enter a custom playlist URL", key: "setup:m3u" })
             rows.Push({ title: "Add Xtream Provider", meta: "Configure Xtream credentials", key: "setup:xtream" })
@@ -511,8 +530,10 @@
             if Iptv_StartsWith(key, "provider:") then
                 closeOverlay()
                 loadProvider(Iptv_Substring(key, 10))
+            else if key = "setup:sample" then
+                usePackagedSampleProvider()
             else if key = "setup:default" then
-                useSampleProvider()
+                useBuiltInPlaylistProvider()
             else if key = "setup:m3u" then
                 closeOverlay()
                 openTextDialog("m3u-url", "Add M3U Playlist", "Enter a remote M3U playlist URL", "https://")
@@ -531,7 +552,16 @@
             end if
         end sub
 
-        sub useSampleProvider()
+        sub usePackagedSampleProvider()
+            provider = Iptv_SampleProviderConfig()
+            m.state = IptvProviderStore_UpsertProvider(m.state, provider)
+            m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
+            IptvProviderStore_SaveState(m.state)
+            closeOverlay()
+            loadProvider(provider.id)
+        end sub
+
+        sub useBuiltInPlaylistProvider()
             provider = Iptv_DefaultProviderConfig()
             m.state = IptvProviderStore_UpsertProvider(m.state, provider)
             m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
