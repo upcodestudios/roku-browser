@@ -1,0 +1,9 @@
+#EXTM3U url-tvg="pkg:/data/default-guide.xml"
+#EXTINF:-1 tvg-id="sample.news" tvg-name="Sample News" group-title="News",Sample News
+https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8
+#EXTINF:-1 tvg-id="sample.sports" tvg-name="Sample Sports" group-title="Sports",Sample Sports
+https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8
+#EXTINF:-1 tvg-id="sample.movies" tvg-name="Sample Movies" group-title="Movies",Sample Movies
+https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8
+#EXTINF:-1 tvg-id="sample.docs" tvg-name="Sample Docs" group-title="Documentary",Sample Docs
+https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8

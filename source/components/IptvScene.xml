@@ -1,0 +1,626 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="IptvScene" extends="Scene">
+    <children>
+        <Rectangle width="1280" height="720" color="0x0F1720FF" />
+
+        <Group translation="[34, 24]">
+            <Label id="titleLabel" width="280" height="34" color="0xFFFFFFFF" text="Roku IPTV" />
+            <Label id="providerLabel" translation="[294, 2]" width="520" height="28" color="0x7FD8FFFF" />
+            <Rectangle id="messageBackground" translation="[288, 30]" width="936" height="30" color="0x20405AFF" visible="false" />
+            <Label id="statusLabel" translation="[302, 34]" width="900" height="20" color="0xE4F3FFFF" />
+        </Group>
+
+        <Label id="hintLabel" translation="[36, 82]" width="1200" height="22" color="0xFFF2A8FF"
+            text="Left/Right switch columns   OK select/play   * actions   Replay refresh   Back providers" />
+
+        <Rectangle translation="[26, 116]" width="230" height="516" color="0x162331FF" />
+        <Rectangle translation="[270, 116]" width="470" height="516" color="0x162331FF" />
+        <Rectangle translation="[754, 116]" width="500" height="516" color="0x162331FF" />
+
+        <Label id="groupHeader" translation="[42, 126]" width="190" height="24" color="0xFFF2A8FF" text="Groups" />
+        <MarkupList id="groupList" translation="[36, 156]" itemComponentName="IptvListRow" itemSize="[210, 104]" numRows="4" drawFocusFeedback="false" />
+
+        <Label id="channelHeader" translation="[286, 126]" width="440" height="24" color="0xFFF2A8FF" text="Channels" />
+        <MarkupList id="channelList" translation="[280, 156]" itemComponentName="IptvListRow" itemSize="[450, 104]" numRows="4" drawFocusFeedback="false" />
+
+        <Label id="guideHeader" translation="[770, 126]" width="460" height="24" color="0xFFF2A8FF" text="Guide" />
+        <MarkupList id="guideList" translation="[764, 156]" itemComponentName="IptvListRow" itemSize="[470, 104]" numRows="4" drawFocusFeedback="false" />
+
+        <Rectangle translation="[0, 662]" width="1280" height="58" color="0x111B25FF" />
+        <Label id="footerLabel" translation="[36, 672]" width="1200" height="20" color="0x90A8BFFF"
+            text="Favorites and recents are saved locally. Sample feed is included for sideload testing." />
+        <Label id="debugLabel" translation="[36, 694]" width="1200" height="20" color="0x6BCBFFFF"
+            text="Debug: app boot" />
+
+        <Group id="overlay" visible="false">
+            <Rectangle width="1280" height="720" color="0x000000BB" />
+            <Rectangle translation="[190, 90]" width="900" height="540" color="0x162331FF" />
+            <Label id="overlayTitle" translation="[220, 122]" width="840" height="30" color="0xFFF2A8FF" />
+            <Label id="overlayHint" translation="[220, 154]" width="840" height="22" color="0x9CB4CAFF" />
+            <MarkupList id="overlayList" translation="[220, 190]" itemComponentName="IptvListRow" itemSize="[840, 104]" numRows="4" drawFocusFeedback="false" />
+        </Group>
+
+        <Video id="videoPlayer" visible="false" width="1280" height="720" />
+        <IptvLoadTask id="loadTask" />
+    </children>
+    <script type="text/brightscript" uri="pkg:/source/IptvSupport.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvProviderStore.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvPlaybackService.brs" />
+    <script type="text/brightscript"><![CDATA[
+        function init()
+            m.top.setFocus(true)
+
+            m.titleLabel = m.top.findNode("titleLabel")
+            m.providerLabel = m.top.findNode("providerLabel")
+            m.messageBackground = m.top.findNode("messageBackground")
+            m.statusLabel = m.top.findNode("statusLabel")
+            m.hintLabel = m.top.findNode("hintLabel")
+            m.groupHeader = m.top.findNode("groupHeader")
+            m.channelHeader = m.top.findNode("channelHeader")
+            m.guideHeader = m.top.findNode("guideHeader")
+            m.groupList = m.top.findNode("groupList")
+            m.channelList = m.top.findNode("channelList")
+            m.guideList = m.top.findNode("guideList")
+            m.footerLabel = m.top.findNode("footerLabel")
+            m.debugLabel = m.top.findNode("debugLabel")
+            m.overlay = m.top.findNode("overlay")
+            m.overlayTitle = m.top.findNode("overlayTitle")
+            m.overlayHint = m.top.findNode("overlayHint")
+            m.overlayList = m.top.findNode("overlayList")
+            m.videoPlayer = m.top.findNode("videoPlayer")
+            m.loadTask = m.top.findNode("loadTask")
+
+            m.titleLabel.font.size = 30
+            m.providerLabel.font.size = 24
+            m.statusLabel.font.size = 18
+            m.hintLabel.font.size = 18
+            m.groupHeader.font.size = 22
+            m.channelHeader.font.size = 22
+            m.guideHeader.font.size = 22
+            m.footerLabel.font.size = 18
+            m.debugLabel.font.size = 16
+            m.overlayTitle.font.size = 28
+            m.overlayHint.font.size = 18
+
+            m.groupList.observeField("itemSelected", "onGroupSelected")
+            m.channelList.observeField("itemSelected", "onChannelSelected")
+            m.channelList.observeField("itemFocused", "onChannelFocused")
+            m.overlayList.observeField("itemSelected", "onOverlaySelected")
+            m.videoPlayer.observeField("state", "onVideoStateChanged")
+            m.loadTask.observeField("response", "onCatalogLoaded")
+
+            m.state = IptvProviderStore_LoadState()
+            m.catalog = invalid
+            m.visibleChannels = []
+            m.currentGroupKey = "All"
+            m.currentProviderId = ""
+            m.focusArea = "group"
+            m.overlayMode = ""
+            m.dialogMode = ""
+            m.pendingConfig = invalid
+            m.isLoading = false
+            m.debugHistory = []
+
+            updateFocusHeaders()
+            bootstrap()
+        end function
+
+        sub bootstrap()
+            if m.state.providers.Count() = 0 then
+                showLoadingPlaceholders("Sample feed is ready to install.")
+                showSetupOverlay()
+                showStatus("info", "Add a provider to start browsing live TV.")
+            else
+                providerId = m.state.selectedProviderId
+                if providerId = "" then providerId = m.state.providers[0].id
+                loadProvider(providerId)
+            end if
+        end sub
+
+        function onKeyEvent(key as String, press as Boolean) as Boolean
+            if not press then return false
+
+            if m.videoPlayer.visible then
+                if key = "back" or key = "OK" or key = "options" then
+                    stopPlayback()
+                    return true
+                end if
+                return true
+            end if
+
+            if m.overlay.visible then
+                if key = "back" or key = "options" or key = "left" then
+                    closeOverlay()
+                    return true
+                end if
+                return false
+            end if
+
+            if key = "left" then
+                setFocusArea("group")
+                return true
+            else if key = "right" then
+                setFocusArea("channel")
+                return true
+            else if key = "options" then
+                showActionsOverlay()
+                return true
+            else if key = "back" then
+                showProviderOverlay()
+                return true
+            else if key = "replay" then
+                refreshCurrentProvider()
+                return true
+            end if
+
+            return false
+        end function
+
+        sub loadProvider(providerId as Dynamic)
+            provider = Iptv_FindProviderById(m.state.providers, providerId)
+            if provider = invalid then
+                showLoadingPlaceholders("Choose a provider to continue.")
+                showSetupOverlay()
+                showStatus("error", "No provider is configured yet.")
+                return
+            end if
+
+            if m.isLoading then return
+            m.isLoading = true
+            m.currentProviderId = provider.id
+            m.providerLabel.text = provider.title + "  [" + Iptv_Upper(provider.kind) + "]"
+            showLoadingPlaceholders("Loading channels and guide data ...")
+            showStatus("info", "Loading provider data from " + Iptv_HostLabel(provider.endpoint) + " ...")
+            appendDebug("Load started: " + provider.title)
+            m.loadTask.request = { provider: provider }
+            m.loadTask.control = "RUN"
+        end sub
+
+        sub onCatalogLoaded()
+            response = m.loadTask.response
+            if response = invalid then return
+
+            m.isLoading = false
+            m.catalog = response
+            selectedProviderId = Iptv_SafeString(response.providerId)
+            if selectedProviderId = "" then selectedProviderId = m.currentProviderId
+            m.state = IptvProviderStore_SetSelectedProvider(m.state, selectedProviderId)
+            IptvProviderStore_SaveState(m.state)
+
+            groups = ["All", "Favorites", "Recents"]
+            for each groupTitle in response.groups
+                groups.Push(groupTitle)
+            end for
+
+            rows = []
+            for each groupTitle in groups
+                meta = "Filter"
+                if groupTitle = "Favorites" then meta = m.state.favorites.Count().ToStr() + " saved"
+                if groupTitle = "Recents" then meta = m.state.recents.Count().ToStr() + " recent"
+                rows.Push({ title: groupTitle, meta: meta, key: groupTitle })
+            end for
+            m.groupList.content = Iptv_NewListContent(rows)
+
+            if response.channels.Count() = 0 then
+                errorMessage = "This provider returned no live channels."
+                if response.errors.Count() > 0 then errorMessage = response.errors[0]
+                showStatus("error", errorMessage)
+                appendDebug("Load failed: " + errorMessage)
+            else if response.errors.Count() > 0 then
+                showStatus("warn", response.errors[0])
+                appendDebug("Load warning: " + response.errors[0])
+            else
+                showStatus("success", response.channels.Count().ToStr() + " live channels ready.")
+                appendDebug("Load finished: " + response.channels.Count().ToStr() + " channels")
+            end if
+
+            m.currentGroupKey = "All"
+            refreshVisibleChannels()
+            setFocusArea("group")
+        end sub
+
+        sub refreshVisibleChannels()
+            m.visibleChannels = []
+            if m.catalog = invalid then
+                showEmptyState("No channels", "Load a provider first", "Guide unavailable", "Select a channel to inspect schedule")
+                return
+            end if
+
+            if m.currentGroupKey = "Favorites" then
+                for each channel in m.catalog.channels
+                    if Iptv_ArrayContains(m.state.favorites, channel.id) then m.visibleChannels.Push(channel)
+                end for
+            else if m.currentGroupKey = "Recents" then
+                channelById = {}
+                for each channel in m.catalog.channels
+                    channelById[channel.id] = channel
+                end for
+                for each recentId in m.state.recents
+                    if channelById.DoesExist(recentId) then m.visibleChannels.Push(channelById[recentId])
+                end for
+            else if m.currentGroupKey = "All" then
+                m.visibleChannels = m.catalog.channels
+            else
+                for each channel in m.catalog.channels
+                    if Iptv_SafeString(channel.group) = m.currentGroupKey then m.visibleChannels.Push(channel)
+                end for
+            end if
+
+            rows = []
+            for each channel in m.visibleChannels
+                badge = ""
+                if Iptv_ArrayContains(m.state.favorites, channel.id) then badge = "Fav"
+                meta = Iptv_SafeString(channel.group) + "  |  " + Iptv_SafeString(channel.metadata.nowTitle)
+                rows.Push({ title: channel.title, meta: meta, key: channel.id, badge: badge })
+            end for
+
+            if rows.Count() = 0 then
+                showEmptyState("No channels", "This filter is currently empty", "Guide unavailable", "Choose another filter or provider")
+                return
+            end if
+            m.channelList.content = Iptv_NewListContent(rows)
+            updateGuideForFocusedChannel()
+        end sub
+
+        sub onGroupSelected()
+            content = m.groupList.content
+            if content = invalid then return
+
+            focused = m.groupList.itemSelected
+            if focused < 0 or focused >= content.GetChildCount() then return
+            selectedNode = content.GetChild(focused)
+            if selectedNode = invalid then return
+
+            m.currentGroupKey = Iptv_SafeString(selectedNode.key)
+            refreshVisibleChannels()
+            setFocusArea("channel")
+        end sub
+
+        sub onChannelSelected()
+            playFocusedChannel()
+        end sub
+
+        sub onChannelFocused()
+            updateGuideForFocusedChannel()
+        end sub
+
+        sub updateGuideForFocusedChannel()
+            if m.visibleChannels.Count() = 0 then
+                m.guideList.content = Iptv_NewListContent([{ title: "Guide unavailable", meta: "No channel is selected", key: "" }])
+                return
+            end if
+
+            focused = m.channelList.itemFocused
+            if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
+            channel = m.visibleChannels[focused]
+            m.channelHeader.text = "Channels  |  " + channel.title
+
+            programs = []
+            if m.catalog.guideByChannel.DoesExist(channel.id) then programs = m.catalog.guideByChannel[channel.id]
+
+            guideRows = []
+            if programs.Count() = 0 then
+                guideRows.Push({ title: channel.title, meta: "Guide unavailable for this channel", key: "" })
+                guideRows.Push({ title: "Source", meta: Iptv_SafeString(channel.streamUrl), key: "" })
+                appendDebug("Guide unavailable: " + channel.title)
+            else
+                limit = programs.Count()
+                if limit > 5 then limit = 5
+                for i = 0 to limit - 1
+                    program = programs[i]
+                    timeLabel = Iptv_FormatClock(program.startTime)
+                    if Iptv_IsNonEmptyString(program.endTime) then timeLabel = timeLabel + "-" + Iptv_FormatClock(program.endTime)
+                    meta = timeLabel
+                    if Iptv_IsNonEmptyString(program.description) then meta = meta + "  |  " + program.description
+                    guideRows.Push({ title: program.title, meta: meta, key: "" })
+                end for
+            end if
+
+            m.guideList.content = Iptv_NewListContent(guideRows)
+        end sub
+
+        sub playFocusedChannel()
+            if m.visibleChannels.Count() = 0 then return
+            focused = m.channelList.itemFocused
+            if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
+            channel = m.visibleChannels[focused]
+
+            target = IptvPlaybackService_Resolve(channel)
+            if not Iptv_IsNonEmptyString(target.streamUrl) then
+                showStatus("error", "This channel does not have a playable stream URL.")
+                appendDebug("Playback blocked: missing URL")
+                return
+            end if
+
+            content = CreateObject("roSGNode", "ContentNode")
+            content.url = target.streamUrl
+            content.title = channel.title
+            if target.streamFormat <> "" then content.streamFormat = target.streamFormat
+
+            m.videoPlayer.content = content
+            m.videoPlayer.visible = true
+            m.videoPlayer.control = "play"
+
+            m.state = IptvProviderStore_RememberRecent(m.state, channel.id)
+            m.state = IptvProviderStore_RememberLastWatched(m.state, channel.providerId, channel.id)
+            IptvProviderStore_SaveState(m.state)
+            showStatus("success", "Playing " + channel.title)
+            appendDebug("Playback started: " + channel.title)
+        end sub
+
+        sub stopPlayback()
+            m.videoPlayer.control = "stop"
+            m.videoPlayer.visible = false
+            appendDebug("Playback stopped")
+            setFocusArea("channel")
+        end sub
+
+        sub onVideoStateChanged()
+            currentState = m.videoPlayer.state
+            if currentState = "error" then
+                stopPlayback()
+                showStatus("error", "Playback failed for the selected stream.")
+                appendDebug("Playback failed")
+            else if currentState = "finished" then
+                stopPlayback()
+            else if currentState = "playing" then
+                appendDebug("Video state: playing")
+            else if currentState = "buffering" then
+                appendDebug("Video state: buffering")
+            end if
+        end sub
+
+        sub refreshCurrentProvider()
+            if Iptv_IsNonEmptyString(m.currentProviderId) then loadProvider(m.currentProviderId)
+        end sub
+
+        sub setFocusArea(area as Dynamic)
+            m.focusArea = Iptv_SafeString(area)
+            updateFocusHeaders()
+            if m.focusArea = "channel" then
+                m.channelList.setFocus(true)
+            else
+                m.groupList.setFocus(true)
+            end if
+        end sub
+
+        sub updateFocusHeaders()
+            groupColor = "0xFFF2A8FF"
+            channelColor = "0xFFF2A8FF"
+            if m.focusArea = "group" then
+                groupColor = "0x7FD8FFFF"
+            else if m.focusArea = "channel" then
+                channelColor = "0x7FD8FFFF"
+            end if
+            m.groupHeader.color = groupColor
+            m.channelHeader.color = channelColor
+        end sub
+
+        sub showStatus(kind as Dynamic, message as Dynamic)
+            resolvedKind = Iptv_Lower(kind)
+            panelColor = "0x20405AFF"
+            if resolvedKind = "success" then
+                panelColor = "0x1B5E3BFF"
+            else if resolvedKind = "warn" then
+                panelColor = "0x705A14FF"
+            else if resolvedKind = "error" then
+                panelColor = "0x7A2424FF"
+            end if
+
+            textValue = Iptv_SafeString(message)
+            m.statusLabel.text = textValue
+            m.messageBackground.color = panelColor
+            m.messageBackground.visible = textValue <> ""
+        end sub
+
+        sub showSetupOverlay()
+            rows = [
+                { title: "Use Sample Feed", meta: "Install the packaged demo provider with guide data", key: "setup:default" },
+                { title: "Add M3U Playlist", meta: "Enter a remote M3U playlist URL", key: "setup:m3u" },
+                { title: "Add Xtream Provider", meta: "Enter Xtream server URL, username, and password", key: "setup:xtream" }
+            ]
+            openOverlay("Provider Setup", "Choose a source to configure.", rows, "setup")
+        end sub
+
+        sub showProviderOverlay()
+            rows = []
+            for each provider in m.state.providers
+                key = "provider:" + provider.id
+                rows.Push({ title: provider.title, meta: provider.kind + "  |  " + Iptv_HostLabel(provider.endpoint), key: key })
+            end for
+            rows.Push({ title: "Use Sample Feed", meta: "Add or restore the built-in sample provider", key: "setup:default" })
+            rows.Push({ title: "Add M3U Playlist", meta: "Enter a custom playlist URL", key: "setup:m3u" })
+            rows.Push({ title: "Add Xtream Provider", meta: "Configure Xtream credentials", key: "setup:xtream" })
+            openOverlay("Providers", "Select a provider or add a new one.", rows, "providers")
+        end sub
+
+        sub showActionsOverlay()
+            rows = [
+                { title: "Switch Providers", meta: "Open configured providers", key: "action:providers" },
+                { title: "Refresh Current Provider", meta: "Reload channels and guide", key: "action:refresh" },
+                { title: "Toggle Favorite", meta: "Add or remove the focused channel", key: "action:favorite" },
+                { title: "Add M3U Playlist", meta: "Configure another playlist URL", key: "setup:m3u" },
+                { title: "Add Xtream Provider", meta: "Configure another Xtream source", key: "setup:xtream" }
+            ]
+            openOverlay("Actions", "Provider management and channel actions.", rows, "actions")
+        end sub
+
+        sub openOverlay(title as Dynamic, hint as Dynamic, rows as Object, mode as String)
+            m.overlayMode = mode
+            m.overlayTitle.text = Iptv_SafeString(title)
+            m.overlayHint.text = Iptv_SafeString(hint)
+            m.overlayList.content = Iptv_NewListContent(rows)
+            m.overlay.visible = true
+            m.overlayList.setFocus(true)
+        end sub
+
+        sub closeOverlay()
+            m.overlay.visible = false
+            m.overlayMode = ""
+            if m.state.providers.Count() = 0 then
+                showSetupOverlay()
+            else
+                setFocusArea(m.focusArea)
+            end if
+        end sub
+
+        sub onOverlaySelected()
+            content = m.overlayList.content
+            if content = invalid then return
+
+            focused = m.overlayList.itemSelected
+            if focused < 0 or focused >= content.GetChildCount() then return
+            row = content.GetChild(focused)
+            if row = invalid then return
+
+            key = Iptv_SafeString(row.key)
+            if Iptv_StartsWith(key, "provider:") then
+                closeOverlay()
+                loadProvider(Iptv_Substring(key, 10))
+            else if key = "setup:default" then
+                useSampleProvider()
+            else if key = "setup:m3u" then
+                closeOverlay()
+                openTextDialog("m3u-url", "Add M3U Playlist", "Enter a remote M3U playlist URL", "https://")
+            else if key = "setup:xtream" then
+                closeOverlay()
+                m.pendingConfig = {}
+                openTextDialog("xtream-url", "Add Xtream Provider", "Enter the Xtream server URL", "https://")
+            else if key = "action:providers" then
+                showProviderOverlay()
+            else if key = "action:refresh" then
+                closeOverlay()
+                refreshCurrentProvider()
+            else if key = "action:favorite" then
+                closeOverlay()
+                toggleFavoriteFocusedChannel()
+            end if
+        end sub
+
+        sub useSampleProvider()
+            provider = Iptv_DefaultProviderConfig()
+            m.state = IptvProviderStore_UpsertProvider(m.state, provider)
+            m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
+            IptvProviderStore_SaveState(m.state)
+            closeOverlay()
+            loadProvider(provider.id)
+        end sub
+
+        sub toggleFavoriteFocusedChannel()
+            if m.visibleChannels.Count() = 0 then return
+            focused = m.channelList.itemFocused
+            if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
+            channel = m.visibleChannels[focused]
+
+            m.state = IptvProviderStore_ToggleFavorite(m.state, channel.id)
+            IptvProviderStore_SaveState(m.state)
+            refreshVisibleChannels()
+
+            if Iptv_ArrayContains(m.state.favorites, channel.id) then
+                showStatus("success", channel.title + " was added to favorites.")
+                appendDebug("Favorite added: " + channel.title)
+            else
+                showStatus("info", channel.title + " was removed from favorites.")
+                appendDebug("Favorite removed: " + channel.title)
+            end if
+        end sub
+
+        sub openTextDialog(mode as Dynamic, title as Dynamic, message as Dynamic, defaultText as Dynamic)
+            dialog = CreateObject("roSGNode", "KeyboardDialog")
+            dialog.title = Iptv_SafeString(title)
+            dialog.message = Iptv_SafeString(message)
+            dialog.text = Iptv_SafeString(defaultText)
+            dialog.buttons = ["Save", "Cancel"]
+            dialog.observeField("buttonSelected", "onTextDialogClosed")
+            m.dialogMode = Iptv_SafeString(mode)
+            m.top.dialog = dialog
+        end sub
+
+        sub onTextDialogClosed()
+            dialog = m.top.dialog
+            if dialog = invalid then return
+
+            selected = dialog.buttonSelected
+            textValue = Iptv_Trim(dialog.text)
+            mode = m.dialogMode
+            m.top.dialog = invalid
+            m.dialogMode = ""
+
+            if selected <> 0 then return
+
+            if mode = "m3u-url" then
+                if not Iptv_IsNonEmptyString(textValue) then
+                    showStatus("warn", "M3U URL entry was empty.")
+                    return
+                end if
+                m.pendingConfig = {
+                    endpoint: textValue
+                }
+                openTextDialog("m3u-guide", "Optional Guide URL", "Enter an XMLTV URL, or leave blank to rely on the playlist header", "")
+            else if mode = "m3u-guide" then
+                endpoint = Iptv_SafeString(m.pendingConfig.endpoint)
+                title = Iptv_HostLabel(endpoint)
+                provider = Iptv_NewProviderConfig("m3u", title, endpoint, "", "", textValue)
+                saveAndLoadProvider(provider)
+            else if mode = "xtream-url" then
+                if not Iptv_IsNonEmptyString(textValue) then
+                    showStatus("warn", "Xtream server URL entry was empty.")
+                    return
+                end if
+                m.pendingConfig.endpoint = textValue
+                openTextDialog("xtream-user", "Xtream Username", "Enter the Xtream username", "")
+            else if mode = "xtream-user" then
+                m.pendingConfig.username = textValue
+                openTextDialog("xtream-pass", "Xtream Password", "Enter the Xtream password", "")
+            else if mode = "xtream-pass" then
+                endpoint = Iptv_SafeString(m.pendingConfig.endpoint)
+                title = Iptv_HostLabel(endpoint)
+                provider = Iptv_NewProviderConfig("xtream", title, endpoint, m.pendingConfig.username, textValue, "")
+                saveAndLoadProvider(provider)
+            end if
+        end sub
+
+        sub saveAndLoadProvider(provider as Object)
+            m.state = IptvProviderStore_UpsertProvider(m.state, provider)
+            m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
+            IptvProviderStore_SaveState(m.state)
+            m.pendingConfig = invalid
+            appendDebug("Provider saved: " + provider.title)
+            loadProvider(provider.id)
+        end sub
+
+        sub showLoadingPlaceholders(message as Dynamic)
+            m.groupList.content = Iptv_NewListContent([
+                { title: "Loading", meta: Iptv_SafeString(message), key: "" }
+            ])
+            m.channelList.content = Iptv_NewListContent([
+                { title: "Loading channels", meta: "Please wait", key: "" }
+            ])
+            m.guideList.content = Iptv_NewListContent([
+                { title: "Loading guide", meta: "Please wait", key: "" }
+            ])
+        end sub
+
+        sub showEmptyState(channelTitle as Dynamic, channelMeta as Dynamic, guideTitle as Dynamic, guideMeta as Dynamic)
+            m.channelList.content = Iptv_NewListContent([
+                { title: channelTitle, meta: channelMeta, key: "" }
+            ])
+            m.guideList.content = Iptv_NewListContent([
+                { title: guideTitle, meta: guideMeta, key: "" }
+            ])
+        end sub
+
+        sub appendDebug(message as Dynamic)
+            textValue = Iptv_SafeString(message)
+            if textValue = "" then return
+
+            m.debugHistory.Push(textValue)
+            while m.debugHistory.Count() > 4
+                m.debugHistory.Delete(0)
+            end while
+
+            latest = m.debugHistory[m.debugHistory.Count() - 1]
+            m.debugLabel.text = "Debug: " + Iptv_Truncate(latest, 120)
+        end sub
+    ]]></script>
+</component>

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="IptvLoadTask" extends="Task">
+    <interface>
+        <field id="request" type="assocarray" />
+        <field id="response" type="assocarray" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/source/IptvSupport.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvCatalogService.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvM3uParser.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvXmltvParser.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvXtreamClient.brs" />
+    <script type="text/brightscript"><![CDATA[
+        sub init()
+            m.top.functionName = "execute"
+        end sub
+
+        sub execute()
+            request = m.top.request
+            if request = invalid then
+                m.top.response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                return
+            end if
+
+            provider = invalid
+            if request.DoesExist("provider") then provider = request.provider
+            if provider = invalid then
+                m.top.response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                return
+            end if
+
+            m.top.response = IptvCatalogService_LoadProvider(provider)
+        end sub
+    ]]></script>
+</component>

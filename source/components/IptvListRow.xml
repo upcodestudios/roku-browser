@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="IptvListRow" extends="Group">
+    <interface>
+        <field id="itemContent" type="node" onChange="showContent" />
+        <field id="itemHasFocus" type="boolean" onChange="showFocus" />
+    </interface>
+    <children>
+        <Rectangle
+            id="focusBackground"
+            width="420"
+            height="104"
+            color="0x18384AFF"
+            visible="false" />
+        <Label
+            id="titleLabel"
+            translation="[18, 14]"
+            width="328"
+            height="46"
+            color="0xECF4FFFF" />
+        <Label
+            id="metaLabel"
+            translation="[18, 60]"
+            width="330"
+            height="28"
+            color="0x90A8BFFF" />
+        <Label
+            id="badgeLabel"
+            translation="[356, 18]"
+            width="48"
+            height="24"
+            horizAlign="right"
+            color="0xFFF2A8FF" />
+    </children>
+    <script type="text/brightscript" uri="pkg:/source/IptvSupport.brs" />
+    <script type="text/brightscript"><![CDATA[
+        sub init()
+            m.focusBackground = m.top.findNode("focusBackground")
+            m.titleLabel = m.top.findNode("titleLabel")
+            m.metaLabel = m.top.findNode("metaLabel")
+            m.badgeLabel = m.top.findNode("badgeLabel")
+            m.titleLabel.font.size = 26
+            m.metaLabel.font.size = 18
+            m.badgeLabel.font.size = 18
+        end sub
+
+        sub showContent()
+            content = m.top.itemContent
+            titleText = ""
+            metaText = ""
+            badgeText = ""
+
+            if content <> invalid then
+                titleText = Iptv_SafeString(content.title)
+                metaText = Iptv_SafeString(content.meta)
+                badgeText = Iptv_SafeString(content.badge)
+            end if
+
+            m.titleLabel.text = Iptv_Truncate(titleText, 28)
+            m.metaLabel.text = Iptv_Truncate(metaText, 34)
+            m.badgeLabel.text = Iptv_Truncate(badgeText, 6)
+        end sub
+
+        sub showFocus()
+            focused = m.top.itemHasFocus
+            m.focusBackground.visible = focused
+        end sub
+    ]]></script>
+</component>

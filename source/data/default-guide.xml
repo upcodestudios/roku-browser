@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="sample.news">
+    <display-name>Sample News</display-name>
+  </channel>
+  <channel id="sample.sports">
+    <display-name>Sample Sports</display-name>
+  </channel>
+  <channel id="sample.movies">
+    <display-name>Sample Movies</display-name>
+  </channel>
+  <channel id="sample.docs">
+    <display-name>Sample Docs</display-name>
+  </channel>
+
+  <programme start="20260409080000 +0000" stop="20260409090000 +0000" channel="sample.news">
+    <title>Morning Global News</title>
+    <desc>Headlines, markets, weather, and producer notes for the day.</desc>
+  </programme>
+  <programme start="20260409090000 +0000" stop="20260409100000 +0000" channel="sample.news">
+    <title>Policy Desk</title>
+    <desc>Politics and briefing coverage from the capital.</desc>
+  </programme>
+  <programme start="20260409100000 +0000" stop="20260409110000 +0000" channel="sample.news">
+    <title>World Report</title>
+    <desc>International reporting and field dispatches.</desc>
+  </programme>
+
+  <programme start="20260409080000 +0000" stop="20260409093000 +0000" channel="sample.sports">
+    <title>Matchday Warmup</title>
+    <desc>Highlights, lineups, and analyst preview segments.</desc>
+  </programme>
+  <programme start="20260409093000 +0000" stop="20260409103000 +0000" channel="sample.sports">
+    <title>Studio Replay</title>
+    <desc>Breakdowns, clips, and fan reactions from recent games.</desc>
+  </programme>
+  <programme start="20260409103000 +0000" stop="20260409113000 +0000" channel="sample.sports">
+    <title>Coaches Table</title>
+    <desc>Long-form interview and tactical analysis.</desc>
+  </programme>
+
+  <programme start="20260409080000 +0000" stop="20260409100000 +0000" channel="sample.movies">
+    <title>Weekend Feature</title>
+    <desc>Feature presentation with sponsor and break markers removed.</desc>
+  </programme>
+  <programme start="20260409100000 +0000" stop="20260409120000 +0000" channel="sample.movies">
+    <title>Indie Spotlight</title>
+    <desc>Curated independent cinema block.</desc>
+  </programme>
+
+  <programme start="20260409080000 +0000" stop="20260409090000 +0000" channel="sample.docs">
+    <title>Deep Ocean</title>
+    <desc>Nature documentary episode with expert commentary.</desc>
+  </programme>
+  <programme start="20260409090000 +0000" stop="20260409100000 +0000" channel="sample.docs">
+    <title>City Systems</title>
+    <desc>Urban infrastructure and planning documentary.</desc>
+  </programme>
+  <programme start="20260409100000 +0000" stop="20260409110000 +0000" channel="sample.docs">
+    <title>Frontier Science</title>
+    <desc>Lab tours and interviews with researchers.</desc>
+  </programme>
+</tv>
