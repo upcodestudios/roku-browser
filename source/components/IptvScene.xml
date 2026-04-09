@@ -28,7 +28,7 @@
 
         <Rectangle translation="[0, 662]" width="1280" height="58" color="0x111B25FF" />
         <Label id="footerLabel" translation="[36, 672]" width="1200" height="20" color="0x90A8BFFF"
-            text="Favorites and recents are saved locally. Sample feed is included for sideload testing." />
+            text="Favorites and recents are saved locally. IPTV-org is included as the built-in playlist source." />
         <Label id="debugLabel" translation="[36, 694]" width="1200" height="20" color="0x6BCBFFFF"
             text="Debug: app boot" />
 
@@ -415,7 +415,7 @@
 
         sub showSetupOverlay()
             rows = [
-                { title: "Use Sample Feed", meta: "Install the packaged demo provider with guide data", key: "setup:default" },
+                { title: "Use Built-In Playlist", meta: "Install the IPTV-org public playlist as a provider", key: "setup:default" },
                 { title: "Add M3U Playlist", meta: "Enter a remote M3U playlist URL", key: "setup:m3u" },
                 { title: "Add Xtream Provider", meta: "Enter Xtream server URL, username, and password", key: "setup:xtream" }
             ]
@@ -428,7 +428,7 @@
                 key = "provider:" + provider.id
                 rows.Push({ title: provider.title, meta: provider.kind + "  |  " + Iptv_HostLabel(provider.endpoint), key: key })
             end for
-            rows.Push({ title: "Use Sample Feed", meta: "Add or restore the built-in sample provider", key: "setup:default" })
+            rows.Push({ title: "Use Built-In Playlist", meta: "Add or restore the IPTV-org playlist provider", key: "setup:default" })
             rows.Push({ title: "Add M3U Playlist", meta: "Enter a custom playlist URL", key: "setup:m3u" })
             rows.Push({ title: "Add Xtream Provider", meta: "Configure Xtream credentials", key: "setup:xtream" })
             openOverlay("Providers", "Select a provider or add a new one.", rows, "providers")

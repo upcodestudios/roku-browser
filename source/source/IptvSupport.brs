@@ -274,11 +274,9 @@ function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic) as
     end if
 
     result.body = transfer.GetToString()
-    result.statusCode = transfer.GetResponseCode()
-    result.headers = Iptv_ParseHeaderArray(transfer.GetResponseHeadersArray())
-
-    if result.statusCode >= 200 and result.statusCode < 300 and result.body <> invalid then
+    if result.body <> invalid and Iptv_IsNonEmptyString(result.body) then
         result.ok = true
+        result.statusCode = 200
     else
         result.error = "Request failed."
     end if
@@ -361,13 +359,13 @@ end function
 
 function Iptv_DefaultProviderConfig() as Object
     return {
-        id: "sample-feed",
+        id: "iptv-org",
         kind: "default",
-        title: "Sample Feed",
-        endpoint: "pkg:/data/default-feed.m3u",
+        title: "IPTV-org",
+        endpoint: "https://iptv-org.github.io/iptv/index.m3u",
         username: "",
         password: "",
-        guideUrl: "pkg:/data/default-guide.xml",
+        guideUrl: "",
         enabled: true
     }
 end function
