@@ -17,14 +17,18 @@
         sub execute()
             request = m.top.request
             if request = invalid then
-                m.top.response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response.metadata = { stage: "request_missing" }
+                m.top.response = response
                 return
             end if
 
             provider = invalid
             if request.DoesExist("provider") then provider = request.provider
             if provider = invalid then
-                m.top.response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response = Iptv_EmptyCatalogResponse("No provider was requested.")
+                response.metadata = { stage: "provider_missing" }
+                m.top.response = response
                 return
             end if
 

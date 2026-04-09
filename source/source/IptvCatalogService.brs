@@ -1,4 +1,5 @@
 function IptvCatalogService_LoadProvider(provider as Object) as Object
+    providerOptions = Iptv_GetProviderOptions(provider)
     result = {
         providerId: Iptv_SafeString(provider.id),
         providerTitle: Iptv_SafeString(provider.title),
@@ -8,6 +9,10 @@ function IptvCatalogService_LoadProvider(provider as Object) as Object
         errors: [],
         metadata: {
             sourceKind: Iptv_SafeString(provider.kind),
+            isPartial: false,
+            loadedChannelCount: 0,
+            guideDeferred: false,
+            stage: "init",
             supportsMovies: false,
             supportsSeries: false
         }
@@ -21,14 +26,19 @@ function IptvCatalogService_LoadProvider(provider as Object) as Object
         result.metadata.supportsMovies = true
         result.metadata.supportsSeries = true
     else
-        playlistResponse = Iptv_ReadTextSource(provider.endpoint)
+        result.metadata.stage = "fetching_playlist"
+        playlistResponse = Iptv_ReadTextSource(provider.endpoint, invalid, providerOptions.requestTimeoutMs)
         if not playlistResponse.ok then
+            result.metadata.stage = "playlist_failed"
             result.errors.Push(IptvCatalogService_FormatSourceError("playlist", playlistResponse))
             return result
         end if
 
-        parsedPlaylist = IptvM3uParser_Parse(playlistResponse.body, provider.id)
+        result.metadata.stage = "parsing_playlist"
+        parsedPlaylist = IptvM3uParser_Parse(playlistResponse.body, provider.id, providerOptions.initialChannelLimit)
         result.channels = parsedPlaylist.items
+        result.metadata.isPartial = parsedPlaylist.truncated
+        result.metadata.loadedChannelCount = result.channels.Count()
         for each parseError in parsedPlaylist.errors
             result.errors.Push(parseError)
         end for
@@ -40,21 +50,30 @@ function IptvCatalogService_LoadProvider(provider as Object) as Object
         guideUrl = Iptv_SafeString(provider.guideUrl)
         if guideUrl = "" then guideUrl = Iptv_SafeString(parsedPlaylist.guideUrl)
 
-        if guideUrl <> "" then
-            guideResponse = Iptv_ReadTextSource(guideUrl)
+        if providerOptions.deferGuide then
+            result.metadata.guideDeferred = true
+            result.metadata.stage = "guide_deferred"
+        else if guideUrl <> "" then
+            result.metadata.stage = "fetching_guide"
+            guideResponse = Iptv_ReadTextSource(guideUrl, invalid, providerOptions.requestTimeoutMs)
             if guideResponse.ok then
+                result.metadata.stage = "parsing_guide"
                 parsedGuide = IptvXmltvParser_Parse(guideResponse.body)
                 result.guideByChannel = IptvCatalogService_AttachGuide(result.channels, parsedGuide)
             else
+                result.metadata.stage = "guide_failed"
                 result.errors.Push(IptvCatalogService_FormatSourceError("guide", guideResponse))
             end if
         else
+            result.metadata.stage = "guide_missing"
             result.errors.Push("No guide URL was found for this provider.")
         end if
     end if
 
     result.groups = IptvCatalogService_CollectGroups(result.channels)
     IptvCatalogService_AnnotateChannels(result.channels, result.guideByChannel)
+    if result.metadata.stage = "parsing_playlist" then result.metadata.stage = "playlist_ready"
+    if result.metadata.stage = "parsing_guide" then result.metadata.stage = "guide_ready"
     return result
 end function
 

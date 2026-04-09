@@ -169,8 +169,14 @@
             m.isLoading = true
             m.currentProviderId = provider.id
             m.providerLabel.text = provider.title + "  [" + Iptv_Upper(provider.kind) + "]"
-            showLoadingPlaceholders("Loading channels and guide data ...")
-            showStatus("info", "Loading provider data from " + Iptv_HostLabel(provider.endpoint) + " ...")
+            options = Iptv_GetProviderOptions(provider)
+            if options.largeFeed then
+                showLoadingPlaceholders("Loading built-in playlist ...")
+                showStatus("info", "Loading built-in playlist from " + Iptv_HostLabel(provider.endpoint) + " ...")
+            else
+                showLoadingPlaceholders("Loading channels and guide data ...")
+                showStatus("info", "Loading provider data from " + Iptv_HostLabel(provider.endpoint) + " ...")
+            end if
             appendDebug("Load started: " + provider.title)
             m.loadTask.request = { provider: provider }
             m.loadTask.control = "RUN"
@@ -182,6 +188,10 @@
 
             m.isLoading = false
             m.catalog = response
+            stageLabel = ""
+            if response.DoesExist("metadata") and response.metadata <> invalid and response.metadata.DoesExist("stage") then
+                stageLabel = Iptv_SafeString(response.metadata.stage)
+            end if
             selectedProviderId = Iptv_SafeString(response.providerId)
             if selectedProviderId = "" then selectedProviderId = m.currentProviderId
             m.state = IptvProviderStore_SetSelectedProvider(m.state, selectedProviderId)
@@ -205,13 +215,33 @@
                 errorMessage = "This provider returned no live channels."
                 if response.errors.Count() > 0 then errorMessage = response.errors[0]
                 showStatus("error", errorMessage)
-                appendDebug("Load failed: " + errorMessage)
+                if stageLabel <> "" then
+                    appendDebug("Load failed at " + stageLabel + ": " + errorMessage)
+                else
+                    appendDebug("Load failed: " + errorMessage)
+                end if
+            else if response.metadata.DoesExist("isPartial") and response.metadata.isPartial then
+                loadedCount = response.channels.Count().ToStr()
+                showStatus("success", "Showing first " + loadedCount + " channels from " + response.providerTitle + ".")
+                if stageLabel <> "" then
+                    appendDebug("Load finished at " + stageLabel + ": partial catalog with " + loadedCount + " channels")
+                else
+                    appendDebug("Load finished: partial catalog with " + loadedCount + " channels")
+                end if
             else if response.errors.Count() > 0 then
                 showStatus("warn", response.errors[0])
-                appendDebug("Load warning: " + response.errors[0])
+                if stageLabel <> "" then
+                    appendDebug("Load warning at " + stageLabel + ": " + response.errors[0])
+                else
+                    appendDebug("Load warning: " + response.errors[0])
+                end if
             else
                 showStatus("success", response.channels.Count().ToStr() + " live channels ready.")
-                appendDebug("Load finished: " + response.channels.Count().ToStr() + " channels")
+                if stageLabel <> "" then
+                    appendDebug("Load finished at " + stageLabel + ": " + response.channels.Count().ToStr() + " channels")
+                else
+                    appendDebug("Load finished: " + response.channels.Count().ToStr() + " channels")
+                end if
             end if
 
             m.currentGroupKey = "All"
@@ -300,7 +330,11 @@
 
             guideRows = []
             if programs.Count() = 0 then
-                guideRows.Push({ title: channel.title, meta: "Guide unavailable for this channel", key: "" })
+                if m.catalog.metadata.DoesExist("guideDeferred") and m.catalog.metadata.guideDeferred then
+                    guideRows.Push({ title: channel.title, meta: "Guide deferred for large source", key: "" })
+                else
+                    guideRows.Push({ title: channel.title, meta: "Guide unavailable for this channel", key: "" })
+                end if
                 guideRows.Push({ title: "Source", meta: Iptv_SafeString(channel.streamUrl), key: "" })
                 appendDebug("Guide unavailable: " + channel.title)
             else

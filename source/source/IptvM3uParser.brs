@@ -1,8 +1,9 @@
-function IptvM3uParser_Parse(text as Dynamic, providerId as Dynamic) as Object
+function IptvM3uParser_Parse(text as Dynamic, providerId as Dynamic, itemLimit = 0 as Integer) as Object
     result = {
         items: [],
         guideUrl: "",
-        errors: []
+        errors: [],
+        truncated: false
     }
 
     normalized = Iptv_Replace(Iptv_SafeString(text), Chr(13), "")
@@ -26,6 +27,10 @@ function IptvM3uParser_Parse(text as Dynamic, providerId as Dynamic) as Object
                 pending.streamUrl = line
                 result.items.Push(pending)
                 pending = invalid
+                if itemLimit > 0 and result.items.Count() >= itemLimit then
+                    result.truncated = true
+                    exit for
+                end if
             end if
         end if
     end for

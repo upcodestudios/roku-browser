@@ -1,6 +1,23 @@
 function Iptv_SafeString(value as Dynamic) as String
     if value = invalid then return ""
-    return "" + value
+
+    valueType = Type(value)
+    if valueType = "String" or valueType = "roString" then return value
+
+    if valueType = "Integer" or valueType = "roInt" or valueType = "roInteger" or valueType = "LongInteger" or valueType = "roLongInteger" then
+        return value.ToStr()
+    end if
+
+    if valueType = "Float" or valueType = "roFloat" or valueType = "Double" or valueType = "roDouble" then
+        return value.ToStr()
+    end if
+
+    if valueType = "Boolean" or valueType = "roBoolean" then
+        if value then return "true"
+        return "false"
+    end if
+
+    return FormatJson(value)
 end function
 
 function Iptv_BytesFromString(value as Dynamic) as Object
@@ -235,7 +252,7 @@ function Iptv_ParseHeaderArray(headers as Dynamic) as Object
     return result
 end function
 
-function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic) as Object
+function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic, timeoutMs = 15000 as Integer) as Object
     target = Iptv_Trim(source)
     result = {
         ok: false,
@@ -274,9 +291,10 @@ function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic) as
     end if
 
     result.body = transfer.GetToString()
+    result.statusCode = 200
+
     if result.body <> invalid and Iptv_IsNonEmptyString(result.body) then
         result.ok = true
-        result.statusCode = 200
     else
         result.error = "Request failed."
     end if
@@ -366,7 +384,13 @@ function Iptv_DefaultProviderConfig() as Object
         username: "",
         password: "",
         guideUrl: "",
-        enabled: true
+        enabled: true,
+        options: {
+            largeFeed: true,
+            initialChannelLimit: 300,
+            deferGuide: true,
+            requestTimeoutMs: 15000
+        }
     }
 end function
 
@@ -389,8 +413,42 @@ function Iptv_NewProviderConfig(kind as Dynamic, title as Dynamic, endpoint as D
         username: Iptv_Trim(username),
         password: Iptv_SafeString(password),
         guideUrl: Iptv_Trim(guideUrl),
-        enabled: true
+        enabled: true,
+        options: {
+            largeFeed: false,
+            initialChannelLimit: 0,
+            deferGuide: false,
+            requestTimeoutMs: 15000
+        }
     }
+end function
+
+function Iptv_GetProviderOptions(provider as Object) as Object
+    options = {
+        largeFeed: false,
+        initialChannelLimit: 0,
+        deferGuide: false,
+        requestTimeoutMs: 15000
+    }
+
+    if provider = invalid or not provider.DoesExist("options") or provider.options = invalid then return options
+
+    rawOptions = provider.options
+    if rawOptions.DoesExist("largeFeed") then options.largeFeed = Iptv_IsTruthy(rawOptions.largeFeed)
+    if rawOptions.DoesExist("initialChannelLimit") then options.initialChannelLimit = Val(Iptv_SafeString(rawOptions.initialChannelLimit))
+    if rawOptions.DoesExist("deferGuide") then options.deferGuide = Iptv_IsTruthy(rawOptions.deferGuide)
+    if rawOptions.DoesExist("requestTimeoutMs") then
+        timeoutValue = Val(Iptv_SafeString(rawOptions.requestTimeoutMs))
+        if timeoutValue > 0 then options.requestTimeoutMs = timeoutValue
+    end if
+
+    return options
+end function
+
+function Iptv_IsTruthy(value as Dynamic) as Boolean
+    if value = true then return true
+    lowered = Iptv_Lower(value)
+    return lowered = "true" or lowered = "1" or lowered = "yes"
 end function
 
 function Iptv_NowToken() as String
