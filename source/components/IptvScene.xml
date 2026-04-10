@@ -87,6 +87,12 @@
             m.channelList.observeField("itemFocused", "onChannelFocused")
             m.overlayList.observeField("itemSelected", "onOverlaySelected")
             m.videoPlayer.observeField("state", "onVideoStateChanged")
+            if m.videoPlayer.hasField("position") then
+                m.videoPlayer.observeField("position", "onVideoPositionChanged")
+                m.videoPlayer.notificationInterval = 1
+            end if
+            if m.videoPlayer.hasField("visible") then m.videoPlayer.observeField("visible", "onVideoVisibilityChanged")
+            m.loadTask.observeField("status", "onLoadStatusChanged")
             m.loadTask.observeField("response", "onCatalogLoaded")
 
             m.state = IptvProviderStore_LoadState()
@@ -101,6 +107,19 @@
             m.pendingConfig = invalid
             m.isLoading = false
             m.debugHistory = []
+            m.searchQuery = ""
+            m.searchActive = false
+            m.playbackSessionId = 0
+            m.playbackStarted = false
+            m.playbackEnded = false
+            m.playbackUserStopRequested = false
+            m.playbackStatusShown = false
+            m.playbackCurrentTitle = ""
+            m.playbackCurrentUrl = ""
+            m.playbackCurrentFormat = ""
+            m.playbackLastPosition = 0
+            m.playbackCurrentChannelId = ""
+            m.playbackCurrentChannelIndex = -1
 
             updateFocusHeaders()
             bootstrap()
@@ -114,6 +133,8 @@
             else
                 providerId = m.state.selectedProviderId
                 if providerId = "" then providerId = m.state.providers[0].id
+                m.state = IptvProviderStore_RefreshBuiltInProvider(m.state, providerId)
+                IptvProviderStore_SaveState(m.state)
                 loadProvider(providerId)
             end if
         end sub
@@ -122,8 +143,20 @@
             if not press then return false
 
             if m.videoPlayer.visible then
-                if key = "back" or key = "OK" or key = "options" then
+                if key = "back" then
                     stopPlayback()
+                    return true
+                else if key = "up" then
+                    surfPlaybackChannel(-1)
+                    return true
+                else if key = "down" then
+                    surfPlaybackChannel(1)
+                    return true
+                else if key = "OK" then
+                    showPlaybackInfo()
+                    return true
+                else if key = "options" then
+                    showPlaybackActionsOverlay()
                     return true
                 end if
                 return true
@@ -158,6 +191,8 @@
         end function
 
         sub loadProvider(providerId as Dynamic)
+            m.state = IptvProviderStore_RefreshBuiltInProvider(m.state, providerId)
+            IptvProviderStore_SaveState(m.state)
             provider = Iptv_FindProviderById(m.state.providers, providerId)
             if provider = invalid then
                 showLoadingPlaceholders("Choose a provider to continue.")
@@ -175,6 +210,7 @@
             m.activeRequestId = nextRequestId
             m.isLoading = true
             m.currentProviderId = provider.id
+            clearSearchState()
             m.providerLabel.text = provider.title + "  [" + Iptv_Upper(provider.kind) + "]"
             options = Iptv_GetProviderOptions(provider)
             if options.largeFeed then
@@ -213,8 +249,14 @@
             if selectedProviderId = "" then selectedProviderId = m.currentProviderId
             m.state = IptvProviderStore_SetSelectedProvider(m.state, selectedProviderId)
             IptvProviderStore_SaveState(m.state)
+            clearSearchState()
 
-            groups = ["All", "Favorites", "Recents"]
+            isLargeBuiltIn = Iptv_SafeString(response.providerId) = "iptv-org"
+
+            groups = ["Favorites", "Recents"]
+            if not (isLargeBuiltIn and response.groups.Count() > 0) then
+                groups.Push("All")
+            end if
             for each groupTitle in response.groups
                 groups.Push(groupTitle)
             end for
@@ -253,7 +295,11 @@
                     appendDebug("Load warning: " + response.errors[0])
                 end if
             else
-                showStatus("success", response.channels.Count().ToStr() + " live channels ready.")
+                if response.groups.Count() > 0 then
+                    showStatus("success", response.channels.Count().ToStr() + " live channels ready across " + response.groups.Count().ToStr() + " groups.")
+                else
+                    showStatus("success", response.channels.Count().ToStr() + " live channels ready.")
+                end if
                 if stageLabel <> "" then
                     appendDebug("Load finished at " + stageLabel + ": " + response.channels.Count().ToStr() + " channels")
                 else
@@ -262,8 +308,32 @@
             end if
 
             m.currentGroupKey = "All"
+            if response.groups.Count() > 0 and isLargeBuiltIn then
+                m.currentGroupKey = response.groups[0]
+            end if
             refreshVisibleChannels()
             setFocusArea("group")
+        end sub
+
+        sub onLoadStatusChanged()
+            status = m.loadTask.status
+            if status = invalid then return
+
+            statusRequestId = 0
+            if status.DoesExist("requestId") then statusRequestId = status.requestId
+            if statusRequestId <> m.activeRequestId then return
+
+            stageLabel = ""
+            if status.DoesExist("stage") then stageLabel = Iptv_SafeString(status.stage)
+            messageText = ""
+            if status.DoesExist("message") then messageText = Iptv_SafeString(status.message)
+
+            if messageText <> "" then
+                appendDebug("Load stage [" + stageLabel + "]: " + messageText)
+                if m.isLoading and stageLabel <> "load_finished" then showStatus("info", messageText)
+            else if stageLabel <> "" then
+                appendDebug("Load stage [" + stageLabel + "]")
+            end if
         end sub
 
         sub refreshVisibleChannels()
@@ -276,6 +346,17 @@
             if m.currentGroupKey = "Favorites" then
                 for each channel in m.catalog.channels
                     if Iptv_ArrayContains(m.state.favorites, channel.id) then m.visibleChannels.Push(channel)
+                end for
+            else if m.searchActive then
+                query = Iptv_Lower(m.searchQuery)
+                for each channel in m.catalog.channels
+                    titleText = Iptv_Lower(channel.title)
+                    groupText = Iptv_Lower(channel.group)
+                    tvgName = ""
+                    if channel.metadata <> invalid and channel.metadata.DoesExist("tvgName") then tvgName = Iptv_Lower(channel.metadata.tvgName)
+                    if Iptv_Contains(titleText, query) or Iptv_Contains(groupText, query) or (tvgName <> "" and Iptv_Contains(tvgName, query)) then
+                        m.visibleChannels.Push(channel)
+                    end if
                 end for
             else if m.currentGroupKey = "Recents" then
                 channelById = {}
@@ -302,9 +383,22 @@
             end for
 
             if rows.Count() = 0 then
-                showEmptyState("No channels", "This filter is currently empty", "Guide unavailable", "Choose another filter or provider")
+                if m.searchActive then
+                    showEmptyState("No matches", "No channels matched """ + m.searchQuery + """", "Guide unavailable", "Try another search query")
+                    m.channelHeader.text = "Channels  |  Search: " + m.searchQuery
+                else
+                    showEmptyState("No channels", "This filter is currently empty", "Guide unavailable", "Choose another filter or provider")
+                end if
                 return
             end if
+
+            if m.searchActive then
+                m.channelHeader.text = "Channels  |  Search: " + m.searchQuery
+                showStatus("success", "Showing " + rows.Count().ToStr() + " results for """ + m.searchQuery + """")
+            else
+                m.channelHeader.text = "Channels"
+            end if
+
             m.channelList.content = Iptv_NewListContent(rows)
             updateGuideForFocusedChannel()
         end sub
@@ -319,6 +413,7 @@
             if selectedNode = invalid then return
 
             m.currentGroupKey = Iptv_SafeString(selectedNode.key)
+            clearSearchState()
             refreshVisibleChannels()
             setFocusArea("channel")
         end sub
@@ -340,7 +435,11 @@
             focused = m.channelList.itemFocused
             if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
             channel = m.visibleChannels[focused]
-            m.channelHeader.text = "Channels  |  " + channel.title
+            if m.searchActive then
+                m.channelHeader.text = "Channels  |  Search: " + m.searchQuery
+            else
+                m.channelHeader.text = "Channels  |  " + channel.title
+            end if
 
             programs = []
             if m.catalog.guideByChannel.DoesExist(channel.id) then programs = m.catalog.guideByChannel[channel.id]
@@ -353,7 +452,7 @@
                     guideRows.Push({ title: channel.title, meta: "Guide unavailable for this channel", key: "" })
                 end if
                 guideRows.Push({ title: "Source", meta: Iptv_SafeString(channel.streamUrl), key: "" })
-                appendDebug("Guide unavailable: " + channel.title)
+                if not m.videoPlayer.visible then appendDebug("Guide unavailable: " + channel.title)
             else
                 limit = programs.Count()
                 if limit > 5 then limit = 5
@@ -374,7 +473,16 @@
             if m.visibleChannels.Count() = 0 then return
             focused = m.channelList.itemFocused
             if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
-            channel = m.visibleChannels[focused]
+            playChannelAtIndex(focused)
+        end sub
+
+        sub playChannelAtIndex(channelIndex as Integer)
+            if m.visibleChannels.Count() = 0 then return
+
+            resolvedIndex = channelIndex
+            if resolvedIndex < 0 then resolvedIndex = 0
+            if resolvedIndex >= m.visibleChannels.Count() then resolvedIndex = m.visibleChannels.Count() - 1
+            channel = m.visibleChannels[resolvedIndex]
 
             target = IptvPlaybackService_Resolve(channel)
             if not Iptv_IsNonEmptyString(target.streamUrl) then
@@ -383,6 +491,22 @@
                 return
             end if
 
+            m.playbackSessionId = m.playbackSessionId + 1
+            m.playbackStarted = false
+            m.playbackEnded = false
+            m.playbackUserStopRequested = false
+            m.playbackStatusShown = false
+            m.playbackCurrentTitle = channel.title
+            m.playbackCurrentUrl = target.streamUrl
+            m.playbackCurrentFormat = target.streamFormat
+            m.playbackLastPosition = 0
+            m.playbackCurrentChannelId = channel.id
+            m.playbackCurrentChannelIndex = resolvedIndex
+
+            m.videoPlayer.control = "stop"
+            m.videoPlayer.visible = false
+            m.videoPlayer.content = invalid
+
             content = CreateObject("roSGNode", "ContentNode")
             content.url = target.streamUrl
             content.title = channel.title
@@ -390,36 +514,196 @@
 
             m.videoPlayer.content = content
             m.videoPlayer.visible = true
+            m.videoPlayer.setFocus(true)
             m.videoPlayer.control = "play"
+            m.channelList.jumpToItem = resolvedIndex
+            m.channelList.itemFocused = resolvedIndex
+            m.channelList.itemSelected = resolvedIndex
+            updateGuideForFocusedChannel()
 
             m.state = IptvProviderStore_RememberRecent(m.state, channel.id)
             m.state = IptvProviderStore_RememberLastWatched(m.state, channel.providerId, channel.id)
             IptvProviderStore_SaveState(m.state)
-            showStatus("success", "Playing " + channel.title)
-            appendDebug("Playback started: " + channel.title)
+            showStatus("info", "Starting " + channel.title + " ...")
+            appendDebug("Playback session #" + m.playbackSessionId.ToStr() + ": " + channel.title + " [" + Iptv_SafeString(target.streamFormat) + "] " + Iptv_Truncate(target.streamUrl, 72))
         end sub
 
-        sub stopPlayback()
-            m.videoPlayer.control = "stop"
-            m.videoPlayer.visible = false
-            appendDebug("Playback stopped")
-            setFocusArea("channel")
+        sub surfPlaybackChannel(direction as Integer)
+            if m.visibleChannels.Count() = 0 then return
+            if m.playbackCurrentChannelIndex < 0 then
+                playChannelAtIndex(0)
+                return
+            end if
+
+            nextIndex = m.playbackCurrentChannelIndex + direction
+            if nextIndex < 0 then nextIndex = m.visibleChannels.Count() - 1
+            if nextIndex >= m.visibleChannels.Count() then nextIndex = 0
+            playChannelAtIndex(nextIndex)
+        end sub
+
+        sub showPlaybackInfo()
+            if not m.videoPlayer.visible then return
+
+            infoText = m.playbackCurrentTitle
+            if m.playbackCurrentFormat <> "" then infoText = infoText + "  |  " + Iptv_Upper(m.playbackCurrentFormat)
+
+            if m.catalog <> invalid and m.playbackCurrentChannelIndex >= 0 and m.playbackCurrentChannelIndex < m.visibleChannels.Count() then
+                channel = m.visibleChannels[m.playbackCurrentChannelIndex]
+                if channel.metadata <> invalid and channel.metadata.DoesExist("nowTitle") and Iptv_IsNonEmptyString(channel.metadata.nowTitle) then
+                    infoText = infoText + "  |  " + Iptv_SafeString(channel.metadata.nowTitle)
+                end if
+            end if
+
+            showStatus("info", infoText)
+            appendDebug("Playback info: " + m.playbackCurrentTitle + " [" + Iptv_SafeString(m.playbackCurrentFormat) + "]")
+        end sub
+
+        sub stopPlayback(reason = "user" as Dynamic)
+            if m.playbackEnded then return
+
+            resolvedReason = Iptv_SafeString(reason)
+            if resolvedReason = "" then resolvedReason = "user"
+            if resolvedReason = "user" then m.playbackUserStopRequested = true
+            finalizePlayback(resolvedReason)
         end sub
 
         sub onVideoStateChanged()
             currentState = m.videoPlayer.state
+            appendDebug("Video state [" + currentState + "]: " + Iptv_VideoDebugSummary(m.videoPlayer, m.playbackCurrentUrl, m.playbackCurrentFormat))
+
             if currentState = "error" then
-                stopPlayback()
-                showStatus("error", "Playback failed for the selected stream.")
-                appendDebug("Playback failed")
+                    finalizePlayback("error")
             else if currentState = "finished" then
-                stopPlayback()
+                if m.playbackStarted then
+                    finalizePlayback("finished")
+                else
+                    finalizePlayback("startup-failed")
+                end if
+            else if currentState = "none" or currentState = "stopped" or currentState = "stop" then
+                if m.playbackUserStopRequested then
+                    finalizePlayback("user")
+                else if m.playbackStarted then
+                    finalizePlayback("finished")
+                else
+                    finalizePlayback("startup-failed")
+                end if
             else if currentState = "playing" then
-                appendDebug("Video state: playing")
+                m.playbackStarted = true
+                if not m.playbackStatusShown then
+                    m.playbackStatusShown = true
+                    showStatus("success", "Playing " + m.playbackCurrentTitle)
+                end if
             else if currentState = "buffering" then
-                appendDebug("Video state: buffering")
+                if not m.playbackStatusShown then
+                    m.playbackStatusShown = true
+                    showStatus("info", "Buffering " + m.playbackCurrentTitle + " ...")
+                end if
             end if
         end sub
+
+        sub onVideoPositionChanged()
+            if not m.videoPlayer.visible then return
+            if not m.videoPlayer.hasField("position") then return
+
+            positionValue = int(m.videoPlayer.position)
+            if positionValue <> m.playbackLastPosition then
+                m.playbackLastPosition = positionValue
+                if positionValue > 0 then m.playbackStarted = true
+            end if
+        end sub
+
+        sub onVideoVisibilityChanged()
+            appendDebug("Video visible: " + Iptv_SafeString(m.videoPlayer.visible))
+        end sub
+
+        sub finalizePlayback(reason as Dynamic)
+            if m.playbackEnded then return
+
+            m.playbackEnded = true
+            resolvedReason = Iptv_SafeString(reason)
+            if resolvedReason = "" then resolvedReason = "finished"
+
+            errorSummary = Iptv_VideoErrorSummary(m.videoPlayer)
+            statusMessage = ""
+            debugMessage = ""
+
+            if resolvedReason = "user" then
+                statusMessage = "Stopped " + m.playbackCurrentTitle + "."
+                debugMessage = "Playback stopped by user"
+            else if resolvedReason = "finished" then
+                statusMessage = "Playback finished for " + m.playbackCurrentTitle + "."
+                debugMessage = "Playback finished"
+            else
+                statusMessage = "Playback failed for " + m.playbackCurrentTitle
+                if errorSummary <> "" then statusMessage = statusMessage + ": " + errorSummary
+                debugMessage = "Playback failure"
+                if errorSummary <> "" then debugMessage = debugMessage + ": " + errorSummary
+            end if
+
+            m.videoPlayer.control = "stop"
+            m.videoPlayer.visible = false
+            m.videoPlayer.content = invalid
+
+            if resolvedReason = "user" then
+                showStatus("info", statusMessage)
+            else if resolvedReason = "finished" then
+                showStatus("info", statusMessage)
+            else
+                showStatus("error", statusMessage)
+            end if
+
+            appendDebug(debugMessage)
+            setFocusArea("channel")
+        end sub
+
+        function Iptv_VideoDebugSummary(video as Object, streamUrl as Dynamic, streamFormat as Dynamic) as String
+            parts = []
+            if Iptv_IsNonEmptyString(streamFormat) then parts.Push("format=" + Iptv_SafeString(streamFormat))
+            if Iptv_IsNonEmptyString(streamUrl) then parts.Push("url=" + Iptv_Truncate(streamUrl, 64))
+
+            errorSummary = Iptv_VideoErrorSummary(video)
+            if errorSummary <> "" then parts.Push(errorSummary)
+
+            if video <> invalid and video.hasField("position") then
+                parts.Push("position=" + int(video.position).ToStr())
+            end if
+
+            if parts.Count() = 0 then return "no details"
+            return Iptv_JoinDebugParts(parts)
+        end function
+
+        function Iptv_VideoErrorSummary(video as Object) as String
+            if video = invalid then return ""
+
+            parts = []
+            if video.hasField("errorCode") then
+                errorCode = int(video.errorCode)
+                if errorCode <> 0 then parts.Push("errorCode=" + errorCode.ToStr())
+            end if
+            if video.hasField("errorMsg") then
+                errorMsg = Iptv_Trim(video.errorMsg)
+                if errorMsg <> "" then parts.Push(errorMsg)
+            end if
+            if video.hasField("bufferingStatus") then
+                bufferingStatus = Iptv_Trim(video.bufferingStatus)
+                if bufferingStatus <> "" then parts.Push("buffer=" + bufferingStatus)
+            end if
+
+            if parts.Count() = 0 then return ""
+            return Iptv_JoinDebugParts(parts)
+        end function
+
+        function Iptv_JoinDebugParts(parts as Object) as String
+            result = ""
+            for each part in parts
+                textPart = Iptv_SafeString(part)
+                if textPart <> "" then
+                    if result <> "" then result = result + "  "
+                    result = result + textPart
+                end if
+            end for
+            return result
+        end function
 
         sub refreshCurrentProvider()
             if Iptv_IsNonEmptyString(m.currentProviderId) then loadProvider(m.currentProviderId)
@@ -492,10 +776,31 @@
                 { title: "Switch Providers", meta: "Open configured providers", key: "action:providers" },
                 { title: "Refresh Current Provider", meta: "Reload channels and guide", key: "action:refresh" },
                 { title: "Toggle Favorite", meta: "Add or remove the focused channel", key: "action:favorite" },
+                { title: "Search Channels", meta: "Search the full current provider catalog", key: "action:search" },
                 { title: "Add M3U Playlist", meta: "Configure another playlist URL", key: "setup:m3u" },
                 { title: "Add Xtream Provider", meta: "Configure another Xtream source", key: "setup:xtream" }
             ]
+            if m.searchActive then
+                rows.Insert(3, { title: "Clear Search", meta: "Restore the normal channel list", key: "action:clear-search" })
+            end if
             openOverlay("Actions", "Provider management and channel actions.", rows, "actions")
+        end sub
+
+        sub showPlaybackActionsOverlay()
+            favoriteAction = "Add Favorite"
+            favoriteMeta = "Save the current channel"
+            if Iptv_ArrayContains(m.state.favorites, m.playbackCurrentChannelId) then
+                favoriteAction = "Remove Favorite"
+                favoriteMeta = "Remove the current channel from favorites"
+            end if
+
+            rows = [
+                { title: "Stop Playback", meta: "Return to the guide and channel browser", key: "playback:stop" },
+                { title: favoriteAction, meta: favoriteMeta, key: "playback:favorite" },
+                { title: "Open Providers", meta: "Switch to another provider", key: "playback:providers" },
+                { title: "Refresh Current Provider", meta: "Reload channels and guide data", key: "playback:refresh" }
+            ]
+            openOverlay("Playback Actions", "Use Up/Down to surf channels while video plays.", rows, "playback")
         end sub
 
         sub openOverlay(title as Dynamic, hint as Dynamic, rows as Object, mode as String)
@@ -510,7 +815,9 @@
         sub closeOverlay()
             m.overlay.visible = false
             m.overlayMode = ""
-            if m.state.providers.Count() = 0 then
+            if m.videoPlayer.visible then
+                m.videoPlayer.setFocus(true)
+            else if m.state.providers.Count() = 0 then
                 showSetupOverlay()
             else
                 setFocusArea(m.focusArea)
@@ -530,6 +837,20 @@
             if Iptv_StartsWith(key, "provider:") then
                 closeOverlay()
                 loadProvider(Iptv_Substring(key, 10))
+            else if key = "playback:stop" then
+                closeOverlay()
+                stopPlayback()
+            else if key = "playback:favorite" then
+                closeOverlay()
+                toggleFavoriteFocusedChannel()
+            else if key = "playback:providers" then
+                closeOverlay()
+                stopPlayback("user")
+                showProviderOverlay()
+            else if key = "playback:refresh" then
+                closeOverlay()
+                stopPlayback("user")
+                refreshCurrentProvider()
             else if key = "setup:sample" then
                 usePackagedSampleProvider()
             else if key = "setup:default" then
@@ -549,6 +870,14 @@
             else if key = "action:favorite" then
                 closeOverlay()
                 toggleFavoriteFocusedChannel()
+            else if key = "action:search" then
+                closeOverlay()
+                openTextDialog("search-channels", "Search Channels", "Search all loaded channels for this provider", m.searchQuery)
+            else if key = "action:clear-search" then
+                closeOverlay()
+                clearSearchState()
+                refreshVisibleChannels()
+                showStatus("info", "Search cleared.")
             end if
         end sub
 
@@ -565,6 +894,7 @@
             provider = Iptv_DefaultProviderConfig()
             m.state = IptvProviderStore_UpsertProvider(m.state, provider)
             m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
+            m.state = IptvProviderStore_RefreshBuiltInProvider(m.state, provider.id)
             IptvProviderStore_SaveState(m.state)
             closeOverlay()
             loadProvider(provider.id)
@@ -573,6 +903,9 @@
         sub toggleFavoriteFocusedChannel()
             if m.visibleChannels.Count() = 0 then return
             focused = m.channelList.itemFocused
+            if m.videoPlayer.visible and m.playbackCurrentChannelIndex >= 0 and m.playbackCurrentChannelIndex < m.visibleChannels.Count() then
+                focused = m.playbackCurrentChannelIndex
+            end if
             if focused < 0 or focused >= m.visibleChannels.Count() then focused = 0
             channel = m.visibleChannels[focused]
 
@@ -612,7 +945,17 @@
 
             if selected <> 0 then return
 
-            if mode = "m3u-url" then
+            if mode = "search-channels" then
+                if not Iptv_IsNonEmptyString(textValue) then
+                    clearSearchState()
+                    refreshVisibleChannels()
+                    showStatus("info", "Search cleared.")
+                    return
+                end if
+                m.searchQuery = textValue
+                m.searchActive = true
+                refreshVisibleChannels()
+            else if mode = "m3u-url" then
                 if not Iptv_IsNonEmptyString(textValue) then
                     showStatus("warn", "M3U URL entry was empty.")
                     return
@@ -649,8 +992,14 @@
             m.state = IptvProviderStore_SetSelectedProvider(m.state, provider.id)
             IptvProviderStore_SaveState(m.state)
             m.pendingConfig = invalid
+            clearSearchState()
             appendDebug("Provider saved: " + provider.title)
             loadProvider(provider.id)
+        end sub
+
+        sub clearSearchState()
+            m.searchQuery = ""
+            m.searchActive = false
         end sub
 
         sub showLoadingPlaceholders(message as Dynamic)

@@ -46,6 +46,18 @@ function IptvProviderStore_SetSelectedProvider(state as Object, providerId as Dy
     return state
 end function
 
+function IptvProviderStore_RefreshBuiltInProvider(state as Object, providerId as Dynamic) as Object
+    targetId = Iptv_SafeString(providerId)
+    if targetId <> "iptv-org" then return state
+
+    provider = Iptv_DefaultProviderConfig()
+    state = IptvProviderStore_UpsertProvider(state, provider)
+    if Iptv_SafeString(state.selectedProviderId) = "iptv-org" then
+        state.selectedProviderId = provider.id
+    end if
+    return state
+end function
+
 function IptvProviderStore_ToggleFavorite(state as Object, itemId as Dynamic) as Object
     target = Iptv_SafeString(itemId)
     if Iptv_ArrayContains(state.favorites, target) then

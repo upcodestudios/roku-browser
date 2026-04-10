@@ -252,6 +252,144 @@ function Iptv_ParseHeaderArray(headers as Dynamic) as Object
     return result
 end function
 
+sub Iptv_PublishTaskStatus(statusTarget as Dynamic, requestId as Integer, providerId as Dynamic, stage as Dynamic, message as Dynamic, linesScanned = invalid as Dynamic, channelsFound = invalid as Dynamic)
+    if statusTarget = invalid then return
+
+    payload = {
+        requestId: requestId,
+        providerId: Iptv_SafeString(providerId),
+        stage: Iptv_SafeString(stage),
+        message: Iptv_SafeString(message)
+    }
+
+    if linesScanned <> invalid then payload.linesScanned = linesScanned
+    if channelsFound <> invalid then payload.channelsFound = channelsFound
+    statusTarget.status = payload
+end sub
+
+function Iptv_BuildTempTextPath(source as Dynamic, requestId = 0 as Integer) as String
+    hostLabel = Iptv_Lower(Iptv_HostLabel(source))
+    if hostLabel = "" then hostLabel = "playlist"
+
+    safeLabel = ""
+    for i = 1 to Iptv_Len(hostLabel)
+        ch = Iptv_Substring(hostLabel, i, 1)
+        if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9") then
+            safeLabel = safeLabel + ch
+        else
+            safeLabel = safeLabel + "-"
+        end if
+    end for
+
+    while Iptv_Contains(safeLabel, "--")
+        safeLabel = Iptv_Replace(safeLabel, "--", "-")
+    end while
+    safeLabel = Iptv_Trim(safeLabel)
+    if safeLabel = "" then safeLabel = "playlist"
+
+    return "tmp:/iptv-" + requestId.ToStr() + "-" + safeLabel + ".txt"
+end function
+
+function Iptv_ReadBytesFile(path as Dynamic, maxBytes = 0 as Integer) as Object
+    result = {
+        ok: false,
+        bytes: invalid,
+        sizeBytes: 0,
+        error: ""
+    }
+
+    filePath = Iptv_Trim(path)
+    if filePath = "" then
+        result.error = "Empty file path."
+        return result
+    end if
+
+    bytes = CreateObject("roByteArray")
+    if bytes = invalid or not bytes.ReadFile(filePath) then
+        result.error = "Unable to read file."
+        return result
+    end if
+
+    result.sizeBytes = bytes.Count()
+    if maxBytes > 0 and result.sizeBytes > maxBytes then
+        result.error = "Downloaded file exceeded the size limit."
+        return result
+    end if
+
+    result.ok = true
+    result.bytes = bytes
+    return result
+end function
+
+function Iptv_DownloadTextSourceToTempFile(source as Dynamic, headers = invalid as Dynamic, timeoutMs = 15000 as Integer, requestId = 0 as Integer, maxBytes = 0 as Integer) as Object
+    target = Iptv_Trim(source)
+    result = {
+        ok: false,
+        statusCode: 0,
+        filePath: "",
+        headers: {},
+        error: "",
+        sizeBytes: 0,
+        stage: "playlist_failed"
+    }
+
+    if target = "" then
+        result.error = "Empty source."
+        return result
+    end if
+
+    if Iptv_StartsWith(target, "pkg:/") then
+        result.filePath = target
+        result.ok = true
+        result.statusCode = 200
+        result.stage = "playlist_downloaded"
+        return result
+    end if
+
+    tempPath = Iptv_BuildTempTextPath(target, requestId)
+    port = CreateObject("roMessagePort")
+    transfer = CreateObject("roUrlTransfer")
+    transfer.SetPort(port)
+    transfer.SetUrl(target)
+    transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
+    transfer.InitClientCertificates()
+    transfer.AddHeader("User-Agent", "roku-iptv-prototype/0.1")
+
+    if headers <> invalid then
+        for each key in headers
+            transfer.AddHeader(key, Iptv_SafeString(headers[key]))
+        end for
+    end if
+
+    if not transfer.AsyncGetToFile(tempPath) then
+        result.error = "Unable to start the playlist request."
+        return result
+    end if
+
+    msg = wait(timeoutMs, port)
+    if msg = invalid then
+        result.error = "Playlist request timed out."
+        result.stage = "playlist_timed_out"
+        return result
+    end if
+
+    fileData = Iptv_ReadBytesFile(tempPath, maxBytes)
+    if not fileData.ok then
+        result.error = fileData.error
+        if maxBytes > 0 and fileData.sizeBytes > maxBytes then
+            result.stage = "playlist_too_large"
+        end if
+        return result
+    end if
+
+    result.ok = true
+    result.statusCode = 200
+    result.filePath = tempPath
+    result.sizeBytes = fileData.sizeBytes
+    result.stage = "playlist_downloaded"
+    return result
+end function
+
 function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic, timeoutMs = 15000 as Integer) as Object
     target = Iptv_Trim(source)
     result = {
@@ -278,21 +416,21 @@ function Iptv_ReadTextSource(source as Dynamic, headers = invalid as Dynamic, ti
         return result
     end if
 
-    transfer = CreateObject("roUrlTransfer")
-    transfer.SetUrl(target)
-    transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
-    transfer.InitClientCertificates()
-    transfer.AddHeader("User-Agent", "roku-iptv-prototype/0.1")
-
-    if headers <> invalid then
-        for each key in headers
-            transfer.AddHeader(key, Iptv_SafeString(headers[key]))
-        end for
+    download = Iptv_DownloadTextSourceToTempFile(target, headers, timeoutMs, 0, 0)
+    result.statusCode = download.statusCode
+    result.headers = download.headers
+    if not download.ok then
+        result.error = download.error
+        return result
     end if
 
-    result.body = transfer.GetToString()
-    result.statusCode = 200
+    fileData = Iptv_ReadBytesFile(download.filePath)
+    if not fileData.ok or fileData.bytes = invalid then
+        result.error = fileData.error
+        return result
+    end if
 
+    result.body = fileData.bytes.ToAsciiString()
     if result.body <> invalid and Iptv_IsNonEmptyString(result.body) then
         result.ok = true
     else
@@ -387,7 +525,7 @@ function Iptv_DefaultProviderConfig() as Object
         enabled: true,
         options: {
             largeFeed: true,
-            initialChannelLimit: 300,
+            initialChannelLimit: 0,
             deferGuide: true,
             requestTimeoutMs: 15000
         }

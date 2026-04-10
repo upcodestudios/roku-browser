@@ -2,6 +2,7 @@
 <component name="IptvLoadTask" extends="Task">
     <interface>
         <field id="request" type="assocarray" />
+        <field id="status" type="assocarray" />
         <field id="response" type="assocarray" />
     </interface>
     <script type="text/brightscript" uri="pkg:/source/IptvSupport.brs" />
@@ -18,6 +19,12 @@
             request = m.top.request
             requestId = 0
             if request <> invalid and request.DoesExist("requestId") then requestId = request.requestId
+            m.top.status = {
+                requestId: requestId,
+                providerId: "",
+                stage: "starting",
+                message: "Preparing provider load ..."
+            }
 
             if request = invalid then
                 response = Iptv_EmptyCatalogResponse("No provider was requested.")
@@ -39,10 +46,23 @@
                 return
             end if
 
-            response = IptvCatalogService_LoadProvider(provider)
+            m.top.status = {
+                requestId: requestId,
+                providerId: Iptv_SafeString(provider.id),
+                stage: "load_started",
+                message: "Load started: " + Iptv_SafeString(provider.title)
+            }
+
+            response = IptvCatalogService_LoadProvider(provider, m.top, requestId)
             response.requestId = requestId
             response.providerId = Iptv_SafeString(provider.id)
             if not response.DoesExist("metadata") or response.metadata = invalid then response.metadata = {}
+            m.top.status = {
+                requestId: requestId,
+                providerId: response.providerId,
+                stage: Iptv_SafeString(response.metadata.stage),
+                message: "Load finished: " + Iptv_SafeString(response.providerId)
+            }
             m.top.response = response
         end sub
     ]]></script>

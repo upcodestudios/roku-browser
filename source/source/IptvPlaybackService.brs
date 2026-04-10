@@ -1,11 +1,21 @@
 function IptvPlaybackService_Resolve(item as Object) as Object
+    streamUrl = Iptv_SafeString(item.streamUrl)
     target = {
         itemId: Iptv_SafeString(item.id),
-        streamUrl: Iptv_SafeString(item.streamUrl),
+        streamUrl: streamUrl,
         mimeType: "",
         headers: {},
-        streamFormat: IptvPlaybackService_GuessFormat(item.streamUrl)
+        streamFormat: IptvPlaybackService_GuessFormat(streamUrl),
+        resolvedBy: "extension"
     }
+
+    if target.streamFormat = "" and Iptv_StartsWith(Iptv_Lower(streamUrl), "https://") then
+        if Iptv_Contains(Iptv_Lower(streamUrl), "/master") or Iptv_Contains(Iptv_Lower(streamUrl), "/playlist") then
+            target.streamFormat = "hls"
+            target.resolvedBy = "path-hint"
+        end if
+    end if
+
     return target
 end function
 
