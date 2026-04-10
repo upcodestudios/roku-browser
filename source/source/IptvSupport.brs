@@ -267,6 +267,11 @@ sub Iptv_PublishTaskStatus(statusTarget as Dynamic, requestId as Integer, provid
     statusTarget.status = payload
 end sub
 
+sub Iptv_PublishTaskPartial(statusTarget as Dynamic, payload as Object)
+    if statusTarget = invalid or payload = invalid then return
+    statusTarget.partialResponse = payload
+end sub
+
 function Iptv_BuildTempTextPath(source as Dynamic, requestId = 0 as Integer) as String
     hostLabel = Iptv_Lower(Iptv_HostLabel(source))
     if hostLabel = "" then hostLabel = "playlist"
@@ -319,6 +324,33 @@ function Iptv_ReadBytesFile(path as Dynamic, maxBytes = 0 as Integer) as Object
     result.ok = true
     result.bytes = bytes
     return result
+end function
+
+function Iptv_ReadTextFile(path as Dynamic) as Object
+    result = {
+        ok: false,
+        body: "",
+        error: ""
+    }
+
+    fileData = Iptv_ReadBytesFile(path)
+    if not fileData.ok or fileData.bytes = invalid then
+        result.error = fileData.error
+        return result
+    end if
+
+    result.body = fileData.bytes.ToAsciiString()
+    result.ok = true
+    return result
+end function
+
+function Iptv_WriteTextFile(path as Dynamic, text as Dynamic) as Boolean
+    filePath = Iptv_Trim(path)
+    if filePath = "" then return false
+
+    bytes = CreateObject("roByteArray")
+    bytes.FromAsciiString(Iptv_SafeString(text))
+    return bytes.WriteFile(filePath)
 end function
 
 function Iptv_DownloadTextSourceToTempFile(source as Dynamic, headers = invalid as Dynamic, timeoutMs = 15000 as Integer, requestId = 0 as Integer, maxBytes = 0 as Integer) as Object

@@ -44,6 +44,7 @@
         <IptvLoadTask id="loadTask" />
     </children>
     <script type="text/brightscript" uri="pkg:/source/IptvSupport.brs" />
+    <script type="text/brightscript" uri="pkg:/source/IptvCatalogService.brs" />
     <script type="text/brightscript" uri="pkg:/source/IptvProviderStore.brs" />
     <script type="text/brightscript" uri="pkg:/source/IptvPlaybackService.brs" />
     <script type="text/brightscript"><![CDATA[
@@ -93,6 +94,7 @@
             end if
             if m.videoPlayer.hasField("visible") then m.videoPlayer.observeField("visible", "onVideoVisibilityChanged")
             m.loadTask.observeField("status", "onLoadStatusChanged")
+            m.loadTask.observeField("partialResponse", "onCatalogPartialChanged")
             m.loadTask.observeField("response", "onCatalogLoaded")
 
             m.state = IptvProviderStore_LoadState()
@@ -101,6 +103,8 @@
             m.currentGroupKey = "All"
             m.currentProviderId = ""
             m.activeRequestId = 0
+            m.activeLoadHadVisibleCatalog = false
+            m.activeLoadUsedCache = false
             m.focusArea = "group"
             m.overlayMode = ""
             m.dialogMode = ""
@@ -209,11 +213,27 @@
 
             m.activeRequestId = nextRequestId
             m.isLoading = true
+            previousProviderId = m.currentProviderId
             m.currentProviderId = provider.id
-            clearSearchState()
+            keepCurrentCatalogVisible = Iptv_HasCatalogData(m.catalog) and previousProviderId = provider.id
+            cachedCatalog = invalid
+            if not keepCurrentCatalogVisible then cachedCatalog = IptvProviderStore_GetCatalogCache(provider.id)
+            m.activeLoadHadVisibleCatalog = false
+            m.activeLoadUsedCache = false
+            if previousProviderId <> provider.id then clearSearchState()
             m.providerLabel.text = provider.title + "  [" + Iptv_Upper(provider.kind) + "]"
             options = Iptv_GetProviderOptions(provider)
-            if options.largeFeed then
+            if cachedCatalog <> invalid and Iptv_HasCatalogData(cachedCatalog) then
+                m.activeLoadHadVisibleCatalog = true
+                m.activeLoadUsedCache = true
+                applyCatalogSnapshot(cachedCatalog, true)
+                showStatus("info", "Showing cached results while refreshing ...")
+                appendDebug("Cached catalog displayed: " + provider.title + " (#" + nextRequestId.ToStr() + ")")
+            else if keepCurrentCatalogVisible then
+                m.activeLoadHadVisibleCatalog = true
+                showStatus("info", "Refreshing " + provider.title + " in the background ...")
+                appendDebug("Background refresh started: " + provider.title + " (#" + nextRequestId.ToStr() + ")")
+            else if options.largeFeed then
                 showLoadingPlaceholders("Loading built-in playlist ...")
                 showStatus("info", "Loading built-in playlist from " + Iptv_HostLabel(provider.endpoint) + " ...")
             else
@@ -240,7 +260,6 @@
             end if
 
             m.isLoading = false
-            m.catalog = response
             stageLabel = ""
             if response.DoesExist("metadata") and response.metadata <> invalid and response.metadata.DoesExist("stage") then
                 stageLabel = Iptv_SafeString(response.metadata.stage)
@@ -249,26 +268,23 @@
             if selectedProviderId = "" then selectedProviderId = m.currentProviderId
             m.state = IptvProviderStore_SetSelectedProvider(m.state, selectedProviderId)
             IptvProviderStore_SaveState(m.state)
-            clearSearchState()
 
-            isLargeBuiltIn = Iptv_SafeString(response.providerId) = "iptv-org"
-
-            groups = ["Favorites", "Recents"]
-            if not (isLargeBuiltIn and response.groups.Count() > 0) then
-                groups.Push("All")
+            if response.channels.Count() = 0 and m.activeLoadHadVisibleCatalog and Iptv_HasCatalogData(m.catalog) then
+                warningMessage = "Refresh failed. Showing cached results."
+                if response.errors.Count() > 0 then warningMessage = response.errors[0]
+                showStatus("warn", warningMessage)
+                if stageLabel <> "" then
+                    appendDebug("Refresh failed at " + stageLabel + "; cached catalog kept")
+                else
+                    appendDebug("Refresh failed; cached catalog kept")
+                end if
+                return
             end if
-            for each groupTitle in response.groups
-                groups.Push(groupTitle)
-            end for
 
-            rows = []
-            for each groupTitle in groups
-                meta = "Filter"
-                if groupTitle = "Favorites" then meta = m.state.favorites.Count().ToStr() + " saved"
-                if groupTitle = "Recents" then meta = m.state.recents.Count().ToStr() + " recent"
-                rows.Push({ title: groupTitle, meta: meta, key: groupTitle })
-            end for
-            m.groupList.content = Iptv_NewListContent(rows)
+            m.catalog = response
+            if Iptv_HasCatalogData(response) then IptvProviderStore_SaveCatalogCache(selectedProviderId, response)
+
+            applyCatalogSnapshot(response, true)
 
             if response.channels.Count() = 0 then
                 errorMessage = "This provider returned no live channels."
@@ -306,13 +322,7 @@
                     appendDebug("Load finished: " + response.channels.Count().ToStr() + " channels")
                 end if
             end if
-
-            m.currentGroupKey = "All"
-            if response.groups.Count() > 0 and isLargeBuiltIn then
-                m.currentGroupKey = response.groups[0]
-            end if
-            refreshVisibleChannels()
-            setFocusArea("group")
+            if not m.videoPlayer.visible and not m.activeLoadHadVisibleCatalog then setFocusArea("group")
         end sub
 
         sub onLoadStatusChanged()
@@ -334,6 +344,124 @@
             else if stageLabel <> "" then
                 appendDebug("Load stage [" + stageLabel + "]")
             end if
+        end sub
+
+        function Iptv_HasCatalogData(catalog as Dynamic) as Boolean
+            if catalog = invalid then return false
+            if not catalog.DoesExist("channels") or catalog.channels = invalid then return false
+            return catalog.channels.Count() > 0
+        end function
+
+        function Iptv_NewWorkingCatalog(providerId as Dynamic) as Object
+            provider = Iptv_FindProviderById(m.state.providers, providerId)
+            providerTitle = Iptv_SafeString(providerId)
+            providerKind = "default"
+            if provider <> invalid then
+                providerTitle = Iptv_SafeString(provider.title)
+                providerKind = Iptv_SafeString(provider.kind)
+            end if
+
+            return {
+                providerId: Iptv_SafeString(providerId),
+                providerTitle: providerTitle,
+                channels: [],
+                groups: [],
+                guideByChannel: {},
+                errors: [],
+                metadata: {
+                    sourceKind: providerKind,
+                    isPartial: true,
+                    loadedChannelCount: 0,
+                    guideDeferred: true,
+                    stage: "parsing_playlist_progress",
+                    supportsMovies: false,
+                    supportsSeries: false
+                }
+            }
+        end function
+
+        sub applyCatalogSnapshot(catalog as Object, preserveCurrentGroup as Boolean)
+            m.catalog = catalog
+            if not m.catalog.DoesExist("guideByChannel") or m.catalog.guideByChannel = invalid then m.catalog.guideByChannel = {}
+            rebuildGroupList(preserveCurrentGroup)
+            IptvCatalogService_AnnotateChannels(m.catalog.channels, m.catalog.guideByChannel)
+            refreshVisibleChannels()
+        end sub
+
+        sub rebuildGroupList(preserveCurrentGroup as Boolean)
+            if m.catalog = invalid then return
+
+            isLargeBuiltIn = Iptv_SafeString(m.catalog.providerId) = "iptv-org"
+            groupKeys = ["Favorites", "Recents"]
+            if not (isLargeBuiltIn and m.catalog.groups.Count() > 0) then groupKeys.Push("All")
+            for each groupTitle in m.catalog.groups
+                groupKeys.Push(groupTitle)
+            end for
+
+            if not preserveCurrentGroup or not Iptv_ArrayContains(groupKeys, m.currentGroupKey) then
+                m.currentGroupKey = "All"
+                if isLargeBuiltIn and m.catalog.groups.Count() > 0 then m.currentGroupKey = m.catalog.groups[0]
+            end if
+
+            rows = []
+            for each groupTitle in groupKeys
+                meta = "Filter"
+                if groupTitle = "Favorites" then meta = m.state.favorites.Count().ToStr() + " saved"
+                if groupTitle = "Recents" then meta = m.state.recents.Count().ToStr() + " recent"
+                rows.Push({ title: groupTitle, meta: meta, key: groupTitle })
+            end for
+            m.groupList.content = Iptv_NewListContent(rows)
+        end sub
+
+        sub onCatalogPartialChanged()
+            payload = m.loadTask.partialResponse
+            if payload = invalid then return
+
+            payloadRequestId = 0
+            if payload.DoesExist("requestId") then payloadRequestId = payload.requestId
+            if payloadRequestId <> m.activeRequestId then return
+            if not payload.DoesExist("isPartial") or not payload.isPartial then return
+            if not payload.DoesExist("batchChannels") or payload.batchChannels = invalid then return
+
+            providerId = ""
+            if payload.DoesExist("providerId") then providerId = Iptv_SafeString(payload.providerId)
+            if providerId = "" then providerId = m.currentProviderId
+
+            resetCatalog = false
+            if payload.DoesExist("resetCatalog") then resetCatalog = payload.resetCatalog
+            if resetCatalog or m.catalog = invalid or Iptv_SafeString(m.catalog.providerId) <> providerId then
+                m.catalog = Iptv_NewWorkingCatalog(providerId)
+                m.activeLoadUsedCache = false
+            end if
+
+            existingIds = {}
+            for each existingChannel in m.catalog.channels
+                existingIds[existingChannel.id] = true
+            end for
+
+            for each nextChannel in payload.batchChannels
+                if not existingIds.DoesExist(nextChannel.id) then
+                    m.catalog.channels.Push(nextChannel)
+                    existingIds[nextChannel.id] = true
+                end if
+            end for
+
+            if payload.DoesExist("groups") and payload.groups <> invalid then m.catalog.groups = payload.groups
+            if not m.catalog.DoesExist("metadata") or m.catalog.metadata = invalid then m.catalog.metadata = {}
+            m.catalog.metadata.stage = Iptv_SafeString(payload.stage)
+            m.catalog.metadata.isPartial = true
+            m.catalog.metadata.guideDeferred = true
+            if payload.DoesExist("channelsFound") then m.catalog.metadata.loadedChannelCount = payload.channelsFound
+            if payload.DoesExist("linesScanned") then m.catalog.metadata.linesScanned = payload.linesScanned
+
+            IptvCatalogService_AnnotateChannels(m.catalog.channels, m.catalog.guideByChannel)
+            rebuildGroupList(true)
+            refreshVisibleChannels()
+
+            messageText = ""
+            if payload.DoesExist("message") then messageText = Iptv_SafeString(payload.message)
+            if messageText <> "" then showStatus("info", messageText)
+            appendDebug("Partial catalog: " + m.catalog.channels.Count().ToStr() + " channels")
         end sub
 
         sub refreshVisibleChannels()

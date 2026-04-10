@@ -62,7 +62,10 @@ function IptvM3uParser_ParseBytes(bytes as Object, providerId as Dynamic, itemLi
         pending: invalid,
         shouldStop: false,
         lastPublishedLine: 0,
-        lastPublishedChannels: 0
+        lastPublishedChannels: 0,
+        lastPartialChannels: 0,
+        groupsByName: {},
+        groupOrder: []
     }
     lineBytes = CreateObject("roByteArray")
     byteCount = bytes.Count()
@@ -74,6 +77,7 @@ function IptvM3uParser_ParseBytes(bytes as Object, providerId as Dynamic, itemLi
             result.linesScanned = result.linesScanned + 1
             IptvM3uParser_ProcessLine(lineBytes.ToAsciiString(), providerId, result.linesScanned, result, state, itemLimit)
             IptvM3uParser_MaybePublishProgress(statusTarget, requestId, providerId, result, state, false)
+            IptvM3uParser_MaybePublishPartial(statusTarget, requestId, providerId, result, state, false)
             lineBytes = CreateObject("roByteArray")
             if state.shouldStop then exit for
         else
@@ -87,6 +91,7 @@ function IptvM3uParser_ParseBytes(bytes as Object, providerId as Dynamic, itemLi
     end if
 
     IptvM3uParser_MaybePublishProgress(statusTarget, requestId, providerId, result, state, true)
+    IptvM3uParser_MaybePublishPartial(statusTarget, requestId, providerId, result, state, true)
 
     if state.pending <> invalid then
         result.errors.Push("Playlist entry is missing a stream URL.")
@@ -114,6 +119,12 @@ sub IptvM3uParser_ProcessLine(rawLine as Dynamic, providerId as Dynamic, lineNum
     if state.pending <> invalid then
         state.pending.streamUrl = line
         result.items.Push(state.pending)
+        groupTitle = Iptv_SafeString(state.pending.group)
+        if groupTitle = "" then groupTitle = "Ungrouped"
+        if not state.groupsByName.DoesExist(groupTitle) then
+            state.groupsByName[groupTitle] = true
+            state.groupOrder.Push(groupTitle)
+        end if
         state.pending = invalid
         if itemLimit > 0 and result.items.Count() >= itemLimit then
             result.truncated = true
@@ -135,6 +146,43 @@ sub IptvM3uParser_MaybePublishProgress(statusTarget as Dynamic, requestId as Int
     state.lastPublishedChannels = channelCount
     message = "Parsing playlist: " + result.linesScanned.ToStr() + " lines scanned, " + channelCount.ToStr() + " channels found."
     Iptv_PublishTaskStatus(statusTarget, requestId, providerId, "parsing_playlist_progress", message, result.linesScanned, channelCount)
+end sub
+
+sub IptvM3uParser_MaybePublishPartial(statusTarget as Dynamic, requestId as Integer, providerId as Dynamic, result as Object, state as Object, force as Boolean)
+    if statusTarget = invalid then return
+
+    channelCount = result.items.Count()
+    batchCount = channelCount - state.lastPartialChannels
+    if channelCount <= 0 or batchCount <= 0 then return
+    publishThreshold = 100
+    if state.lastPartialChannels = 0 then publishThreshold = 25
+    if not force and batchCount < publishThreshold then return
+
+    batchChannels = []
+    for i = state.lastPartialChannels to channelCount - 1
+        batchChannels.Push(result.items[i])
+    end for
+
+    groups = []
+    for each groupTitle in state.groupOrder
+        groups.Push(groupTitle)
+    end for
+
+    message = "Parsed " + channelCount.ToStr() + " channels so far."
+    payload = {
+        requestId: requestId,
+        providerId: Iptv_SafeString(providerId),
+        stage: "parsing_playlist_progress",
+        message: message,
+        isPartial: true,
+        resetCatalog: state.lastPartialChannels = 0,
+        batchChannels: batchChannels,
+        groups: groups,
+        linesScanned: result.linesScanned,
+        channelsFound: channelCount
+    }
+    Iptv_PublishTaskPartial(statusTarget, payload)
+    state.lastPartialChannels = channelCount
 end sub
 
 function IptvM3uParser_ParseInfoLine(line as Dynamic, providerId as Dynamic, lineNumber as Integer) as Object

@@ -103,3 +103,65 @@ function IptvProviderStore_ReadAssoc(section as Object, key as Dynamic) as Objec
     if Type(parsed) <> "roAssociativeArray" and Type(parsed) <> "AssociativeArray" then return {}
     return parsed
 end function
+
+function IptvProviderStore_GetCatalogCache(providerId as Dynamic) as Dynamic
+    filePath = IptvProviderStore_CatalogCachePath(providerId)
+    if filePath = "" then return invalid
+
+    fileData = Iptv_ReadTextFile(filePath)
+    if not fileData.ok or not Iptv_IsNonEmptyString(fileData.body) then return invalid
+
+    parsed = ParseJson(fileData.body)
+    if parsed = invalid then return invalid
+    if Type(parsed) <> "roAssociativeArray" and Type(parsed) <> "AssociativeArray" then return invalid
+    return parsed
+end function
+
+sub IptvProviderStore_SaveCatalogCache(providerId as Dynamic, catalog as Object)
+    filePath = IptvProviderStore_CatalogCachePath(providerId)
+    if filePath = "" or catalog = invalid then return
+
+    snapshot = IptvProviderStore_BuildCatalogSnapshot(catalog)
+    if snapshot = invalid then return
+    Iptv_WriteTextFile(filePath, FormatJson(snapshot))
+end sub
+
+function IptvProviderStore_BuildCatalogSnapshot(catalog as Object) as Dynamic
+    if catalog = invalid then return invalid
+
+    metadata = {}
+    if catalog.DoesExist("metadata") and catalog.metadata <> invalid then metadata = catalog.metadata
+    metadata.cachedAt = Iptv_NowToken()
+
+    return {
+        providerId: Iptv_SafeString(catalog.providerId),
+        providerTitle: Iptv_SafeString(catalog.providerTitle),
+        channels: catalog.channels,
+        groups: catalog.groups,
+        guideByChannel: catalog.guideByChannel,
+        errors: catalog.errors,
+        metadata: metadata
+    }
+end function
+
+function IptvProviderStore_CatalogCachePath(providerId as Dynamic) as String
+    targetId = Iptv_Lower(Iptv_Trim(providerId))
+    if targetId = "" then return ""
+
+    safeId = ""
+    for i = 1 to Iptv_Len(targetId)
+        ch = Iptv_Substring(targetId, i, 1)
+        if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9") then
+            safeId = safeId + ch
+        else
+            safeId = safeId + "-"
+        end if
+    end for
+
+    while Iptv_Contains(safeId, "--")
+        safeId = Iptv_Replace(safeId, "--", "-")
+    end while
+    if safeId = "" then safeId = "provider"
+
+    return "tmp:/iptv-catalog-" + safeId + ".json"
+end function
