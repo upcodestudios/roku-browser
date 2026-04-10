@@ -11,7 +11,9 @@ function IptvM3uParser_Parse(text as Dynamic, providerId as Dynamic, itemLimit =
     lines = Iptv_Split(normalized, Chr(10))
     state = {
         pending: invalid,
-        shouldStop: false
+        shouldStop: false,
+        groupsByName: {},
+        groupOrder: []
     }
     lineNumber = 0
 
